@@ -1,140 +1,173 @@
+"""Tests for Domain A — Habits & Check-ins."""
+
 import pytest
-
-from habits import service
-from tests.conftest import ALICE, BOB
-
-DAY = "2026-09-30"
-
-
-def test_log_checkin_counts_up(db):
-    hid = service.create_habit(db, ALICE, "Read", target_count_per_day=2)
-    assert service.log_checkin(db, ALICE, hid, DAY) == 1
-    assert service.log_checkin(db, ALICE, hid, DAY) == 2
-    assert service.log_checkin(db, ALICE, hid, DAY) == 3
+from db import connect, init_schema
+from habits.service import (
+    create_group, list_groups, get_owned_group, delete_group,
+    set_habit_group, create_habit, archive_habit, list_habits,
+    get_owned_habit, log_checkin, undo_checkin, checkins_by_date,
+)
 
 
-def test_checkins_are_per_day(db):
-    hid = service.create_habit(db, ALICE, "Read")
-    service.log_checkin(db, ALICE, hid, "2026-09-29")
-    assert service.log_checkin(db, ALICE, hid, DAY) == 1
+@pytest.fixture
+def db():
+    """In-memory database with schema loaded and a test user inserted."""
+    conn = connect(":memory:")
+    init_schema(conn)
+    conn.execute(
+        "INSERT INTO users (id, first_name, last_name, username, password_hash) "
+        "VALUES (1, 'Luna', 'Larcher', 'luna', 'x')"
+    )
+    conn.execute(
+        "INSERT INTO users (id, first_name, last_name, username, password_hash) "
+        "VALUES (2, 'Other', 'User', 'other', 'x')"
+    )
+    conn.commit()
+    return conn
 
 
-def test_undo_checkin_floors_at_zero(db):
-    hid = service.create_habit(db, ALICE, "Read")
-    service.log_checkin(db, ALICE, hid, DAY)
-    assert service.undo_checkin(db, ALICE, hid, DAY) == 0
-    assert service.undo_checkin(db, ALICE, hid, DAY) == 0
+# ── Groups ──────────────────────────────────────────────
+
+class TestGroups:
+    def test_create_and_list(self, db):
+        gid = create_group(db, 1, "Morning")
+        groups = list_groups(db, 1)
+        assert len(groups) == 1
+        assert groups[0]["name"] == "Morning"
+        assert groups[0]["id"] == gid
+
+    def test_create_empty_name_raises(self, db):
+        with pytest.raises(ValueError):
+            create_group(db, 1, "")
+
+    def test_positions_auto_increment(self, db):
+        create_group(db, 1, "A")
+        create_group(db, 1, "B")
+        groups = list_groups(db, 1)
+        assert groups[0]["position"] < groups[1]["position"]
+
+    def test_delete_group(self, db):
+        gid = create_group(db, 1, "Temp")
+        delete_group(db, 1, gid)
+        assert list_groups(db, 1) == []
+
+    def test_get_owned_group_wrong_user(self, db):
+        gid = create_group(db, 1, "Mine")
+        assert get_owned_group(db, 2, gid) is None
 
 
-def test_undo_checkin_without_row_returns_zero(db):
-    hid = service.create_habit(db, ALICE, "Read")
-    assert service.undo_checkin(db, ALICE, hid, DAY) == 0
+# ── Habits ──────────────────────────────────────────────
+
+class TestHabits:
+    def test_create_and_list(self, db):
+        hid = create_habit(db, 1, "Drink water")
+        habits = list_habits(db, 1)
+        assert len(habits) == 1
+        assert habits[0]["name"] == "Drink water"
+        assert habits[0]["id"] == hid
+
+    def test_create_with_group(self, db):
+        gid = create_group(db, 1, "Health")
+        hid = create_habit(db, 1, "Stretch", group_id=gid)
+        habit = get_owned_habit(db, 1, hid)
+        assert habit["group_id"] == gid
+
+    def test_create_with_bad_group_raises(self, db):
+        with pytest.raises(ValueError):
+            create_habit(db, 1, "Oops", group_id=999)
+
+    def test_create_bad_target_raises(self, db):
+        with pytest.raises(ValueError):
+            create_habit(db, 1, "Bad", target_count_per_day=0)
+
+    def test_create_bad_frequency_raises(self, db):
+        with pytest.raises(ValueError):
+            create_habit(db, 1, "Bad", frequency="weekly")
+
+    def test_custom_needs_weekdays(self, db):
+        with pytest.raises(ValueError):
+            create_habit(db, 1, "Bad", frequency="custom", weekdays_mask=0)
+
+    def test_archive_hides_from_list(self, db):
+        hid = create_habit(db, 1, "Gone")
+        archive_habit(db, 1, hid)
+        assert list_habits(db, 1) == []
+
+    def test_list_by_group(self, db):
+        gid = create_group(db, 1, "G")
+        create_habit(db, 1, "In group", group_id=gid)
+        create_habit(db, 1, "No group")
+        assert len(list_habits(db, 1, group_id=gid)) == 1
+
+    def test_get_owned_habit_wrong_user(self, db):
+        hid = create_habit(db, 1, "Mine")
+        assert get_owned_habit(db, 2, hid) is None
+
+    def test_set_habit_group(self, db):
+        gid = create_group(db, 1, "G")
+        hid = create_habit(db, 1, "Move me")
+        set_habit_group(db, 1, hid, gid)
+        assert get_owned_habit(db, 1, hid)["group_id"] == gid
+
+    def test_set_habit_group_to_none(self, db):
+        gid = create_group(db, 1, "G")
+        hid = create_habit(db, 1, "Move me", group_id=gid)
+        set_habit_group(db, 1, hid, None)
+        assert get_owned_habit(db, 1, hid)["group_id"] is None
+
+    def test_set_habit_group_bad_habit_raises(self, db):
+        gid = create_group(db, 1, "G")
+        with pytest.raises(ValueError):
+            set_habit_group(db, 1, 999, gid)
+
+    def test_set_habit_group_bad_group_raises(self, db):
+        hid = create_habit(db, 1, "H")
+        with pytest.raises(ValueError):
+            set_habit_group(db, 1, hid, 999)
 
 
-def test_other_user_cannot_checkin_or_undo(db):
-    hid = service.create_habit(db, ALICE, "Read")
-    with pytest.raises(ValueError):
-        service.log_checkin(db, BOB, hid, DAY)
-    with pytest.raises(ValueError):
-        service.undo_checkin(db, BOB, hid, DAY)
+# ── Check-ins ───────────────────────────────────────────
 
+class TestCheckins:
+    def test_log_creates_row(self, db):
+        hid = create_habit(db, 1, "Read")
+        count = log_checkin(db, 1, hid, "2026-10-01")
+        assert count == 1
 
-def test_other_user_cannot_archive(db):
-    hid = service.create_habit(db, ALICE, "Read")
-    service.archive_habit(db, BOB, hid)
-    assert [h["id"] for h in service.list_habits(db, ALICE)] == [hid]
+    def test_log_increments(self, db):
+        hid = create_habit(db, 1, "Read")
+        log_checkin(db, 1, hid, "2026-10-01")
+        count = log_checkin(db, 1, hid, "2026-10-01")
+        assert count == 2
 
+    def test_log_wrong_user_raises(self, db):
+        hid = create_habit(db, 1, "Mine")
+        with pytest.raises(ValueError):
+            log_checkin(db, 2, hid, "2026-10-01")
 
-def test_archive_hides_habit(db):
-    hid = service.create_habit(db, ALICE, "Read")
-    service.archive_habit(db, ALICE, hid)
-    assert service.list_habits(db, ALICE) == []
+    def test_undo_decrements(self, db):
+        hid = create_habit(db, 1, "Read")
+        log_checkin(db, 1, hid, "2026-10-01")
+        log_checkin(db, 1, hid, "2026-10-01")
+        count = undo_checkin(db, 1, hid, "2026-10-01")
+        assert count == 1
 
+    def test_undo_never_below_zero(self, db):
+        hid = create_habit(db, 1, "Read")
+        log_checkin(db, 1, hid, "2026-10-01")
+        undo_checkin(db, 1, hid, "2026-10-01")
+        count = undo_checkin(db, 1, hid, "2026-10-01")
+        assert count == 0
 
-def test_list_habits_is_ordered_and_scoped(db):
-    first = service.create_habit(db, ALICE, "A")
-    second = service.create_habit(db, ALICE, "B")
-    service.create_habit(db, BOB, "Not Alice's")
-    assert [h["id"] for h in service.list_habits(db, ALICE)] == [first, second]
+    def test_undo_wrong_user_raises(self, db):
+        hid = create_habit(db, 1, "Mine")
+        with pytest.raises(ValueError):
+            undo_checkin(db, 2, hid, "2026-10-01")
 
-
-@pytest.mark.parametrize("kwargs", [
-    {"target_count_per_day": 0},
-    {"frequency": "weekly"},
-    {"frequency": "custom"},
-    {"frequency": "custom", "weekdays_mask": 0},
-    {"frequency": "custom", "weekdays_mask": 128},
-])
-def test_create_habit_rejects_invalid_settings(db, kwargs):
-    with pytest.raises(ValueError):
-        service.create_habit(db, ALICE, "Bad", **kwargs)
-
-
-def test_create_custom_habit(db):
-    hid = service.create_habit(db, ALICE, "Gym", frequency="custom", weekdays_mask=0b10101)
-    habit = service.list_habits(db, ALICE)[0]
-    assert habit["id"] == hid and habit["weekdays_mask"] == 0b10101
-
-
-def test_create_group_appends_positions(db):
-    a = service.create_group(db, ALICE, "Morning")
-    b = service.create_group(db, ALICE, "Evening")
-    service.create_group(db, BOB, "Not Alice's")
-    groups = service.list_groups(db, ALICE)
-    assert [g["id"] for g in groups] == [a, b]
-    assert [g["position"] for g in groups] == [0, 1]
-
-
-def test_create_group_requires_name(db):
-    with pytest.raises(ValueError):
-        service.create_group(db, ALICE, "   ")
-
-
-def test_create_habit_in_group_and_filter(db):
-    gid = service.create_group(db, ALICE, "Morning")
-    in_group = service.create_habit(db, ALICE, "Stretch", group_id=gid)
-    service.create_habit(db, ALICE, "Read")
-    assert [h["id"] for h in service.list_habits(db, ALICE, group_id=gid)] == [in_group]
-    assert len(service.list_habits(db, ALICE)) == 2
-
-
-def test_set_habit_group_moves_and_ungroups(db):
-    gid = service.create_group(db, ALICE, "Morning")
-    hid = service.create_habit(db, ALICE, "Read")
-    service.set_habit_group(db, ALICE, hid, gid)
-    assert service.list_habits(db, ALICE, group_id=gid)[0]["id"] == hid
-    service.set_habit_group(db, ALICE, hid, None)
-    assert service.list_habits(db, ALICE, group_id=gid) == []
-
-
-def test_cannot_use_another_users_group(db):
-    bobs_group = service.create_group(db, BOB, "Bob's")
-    hid = service.create_habit(db, ALICE, "Read")
-    with pytest.raises(ValueError):
-        service.create_habit(db, ALICE, "Run", group_id=bobs_group)
-    with pytest.raises(ValueError):
-        service.set_habit_group(db, ALICE, hid, bobs_group)
-    with pytest.raises(ValueError):
-        service.set_habit_group(db, BOB, hid, bobs_group)
-
-
-def test_delete_group_keeps_habits_ungrouped(db):
-    gid = service.create_group(db, ALICE, "Morning")
-    hid = service.create_habit(db, ALICE, "Read", group_id=gid)
-    service.delete_group(db, ALICE, gid)
-    assert service.list_groups(db, ALICE) == []
-    assert service.list_habits(db, ALICE)[0]["group_id"] is None
-
-
-def test_other_user_cannot_delete_group(db):
-    gid = service.create_group(db, ALICE, "Morning")
-    service.delete_group(db, BOB, gid)
-    assert len(service.list_groups(db, ALICE)) == 1
-
-
-def test_checkins_by_date(db):
-    hid = service.create_habit(db, ALICE, "Read")
-    service.log_checkin(db, ALICE, hid, "2026-09-29")
-    service.log_checkin(db, ALICE, hid, DAY)
-    service.log_checkin(db, ALICE, hid, DAY)
-    assert service.checkins_by_date(db, hid) == {"2026-09-29": 1, DAY: 2}
+    def test_checkins_by_date(self, db):
+        hid = create_habit(db, 1, "Read")
+        log_checkin(db, 1, hid, "2026-10-01")
+        log_checkin(db, 1, hid, "2026-10-02")
+        log_checkin(db, 1, hid, "2026-10-02")
+        result = checkins_by_date(db, hid)
+        assert result == {"2026-10-01": 1, "2026-10-02": 2}

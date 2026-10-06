@@ -1,1 +1,1 @@
-# habits domain — implemented in a later step.
+# habits domain — habits & check-ins (Domain A).

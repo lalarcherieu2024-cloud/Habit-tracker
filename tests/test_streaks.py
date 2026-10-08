@@ -66,6 +66,24 @@ class TestCurrentStreak:
         log_checkin(db, 1, hid, "2026-10-06")
         assert current_streak(db, hid, target=3, as_of=date(2026, 10, 6)) == 1
 
+    def test_grace_period_morning(self, db):
+        """If today is scheduled but not done yet, streak counts from yesterday."""
+        hid = create_habit(db, 1, "Read")
+        # Done Oct 5 and 6, checking on Oct 7 morning (not done yet)
+        log_checkin(db, 1, hid, "2026-10-05")
+        log_checkin(db, 1, hid, "2026-10-06")
+        assert current_streak(db, hid, as_of=date(2026, 10, 7)) == 2
+
+    def test_custom_weekday_skips_rest_days(self, db):
+        """Mon/Wed/Fri habit: Tue and Thu are rest days, not gaps."""
+        # weekdays_mask: Mon=1, Wed=4, Fri=16  → 1+4+16 = 21
+        hid = create_habit(db, 1, "Gym", frequency="custom", weekdays_mask=21)
+        # Mon Oct 5, Wed Oct 7, Fri Oct 9 (2026: Oct 5 is Mon)
+        log_checkin(db, 1, hid, "2026-10-05")
+        log_checkin(db, 1, hid, "2026-10-07")
+        log_checkin(db, 1, hid, "2026-10-09")
+        assert current_streak(db, hid, as_of=date(2026, 10, 9)) == 3
+
 
 # ── Longest streak ──────────────────────────────────────
 
@@ -89,6 +107,13 @@ class TestLongestStreak:
         assert longest_streak(db, hid) == 5
         assert current_streak(db, hid, as_of=date(2026, 10, 6)) == 2
 
+    def test_custom_weekday_longest(self, db):
+        """Longest streak for a Mon/Wed/Fri habit spanning rest days."""
+        hid = create_habit(db, 1, "Gym", frequency="custom", weekdays_mask=21)
+        log_checkin(db, 1, hid, "2026-10-05")  # Mon
+        log_checkin(db, 1, hid, "2026-10-07")  # Wed
+        assert longest_streak(db, hid) == 2
+
 
 # ── Completion rate ─────────────────────────────────────
 
@@ -108,6 +133,17 @@ class TestCompletionRate:
         _log_n_days(db, 1, hid, 5, date(2026, 10, 6))
         rate = completion_rate(db, hid, window_days=10, as_of=date(2026, 10, 6))
         assert rate == pytest.approx(0.5)
+
+    def test_new_habit_not_penalised(self, db):
+        """A habit created today and done today should show 100%, not 3%."""
+        hid = create_habit(db, 1, "Brand new")
+        # The habit's created_at defaults to date('now') in the schema.
+        # Force it to a known date so the test is deterministic.
+        db.execute("UPDATE habits SET created_at = '2026-10-06' WHERE id = ?", (hid,))
+        db.commit()
+        log_checkin(db, 1, hid, "2026-10-06")
+        rate = completion_rate(db, hid, window_days=30, as_of=date(2026, 10, 6))
+        assert rate == pytest.approx(1.0)
 
 
 # ── Milestones ──────────────────────────────────────────

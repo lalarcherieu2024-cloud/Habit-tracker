@@ -1,13 +1,24 @@
-"""Tests for Domain B — Streaks & Insights."""
+"""Tests for Domain B — Streaks & Insights.
+
+The streak functions take a {date: count} dict, so most tests build one by
+hand — no database needed. Only the milestone tests use `db`.
+"""
 
 import pytest
 from datetime import date, timedelta
 from db import connect, init_schema
-from habits.service import create_habit, log_checkin
+from habits.service import checkins_by_date, create_habit, log_checkin
 from streaks.service import (
     current_streak, longest_streak, completion_rate,
     check_and_award_milestones, milestones_for_habit, milestones_for_user,
 )
+
+MON_WED_FRI = 21  # weekdays_mask: Mon=1 + Wed=4 + Fri=16
+
+
+def _n_days(n, end_date, count=1):
+    """{date: count} for n consecutive days ending on end_date."""
+    return {(end_date - timedelta(days=i)).isoformat(): count for i in range(n)}
 
 
 @pytest.fixture
@@ -20,129 +31,109 @@ def db():
         "VALUES (1, 'Luna', 'Larcher', 'luna', 'x')"
     )
     conn.commit()
-    return conn
-
-
-def _log_n_days(db, user_id, habit_id, n, end_date=None):
-    """Helper: log one check-in per day for n consecutive days ending on end_date."""
-    end_date = end_date or date.today()
-    for i in range(n):
-        day = end_date - timedelta(days=n - 1 - i)
-        log_checkin(db, user_id, habit_id, day.isoformat())
+    yield conn
+    conn.close()
 
 
 # ── Current streak ──────────────────────────────────────
 
 class TestCurrentStreak:
-    def test_no_checkins(self, db):
-        hid = create_habit(db, 1, "Read")
-        assert current_streak(db, hid, as_of=date(2026, 10, 6)) == 0
+    def test_no_checkins(self):
+        assert current_streak({}, as_of=date(2026, 10, 6)) == 0
 
-    def test_one_day(self, db):
-        hid = create_habit(db, 1, "Read")
-        log_checkin(db, 1, hid, "2026-10-06")
-        assert current_streak(db, hid, as_of=date(2026, 10, 6)) == 1
+    def test_one_day(self):
+        assert current_streak({"2026-10-06": 1}, as_of=date(2026, 10, 6)) == 1
 
-    def test_consecutive_days(self, db):
-        hid = create_habit(db, 1, "Read")
-        _log_n_days(db, 1, hid, 5, date(2026, 10, 6))
-        assert current_streak(db, hid, as_of=date(2026, 10, 6)) == 5
+    def test_consecutive_days(self):
+        assert current_streak(_n_days(5, date(2026, 10, 6)), as_of=date(2026, 10, 6)) == 5
 
-    def test_gap_breaks_streak(self, db):
-        hid = create_habit(db, 1, "Read")
-        log_checkin(db, 1, hid, "2026-10-03")
-        # skip Oct 4
-        log_checkin(db, 1, hid, "2026-10-05")
-        log_checkin(db, 1, hid, "2026-10-06")
-        assert current_streak(db, hid, as_of=date(2026, 10, 6)) == 2
+    def test_gap_breaks_streak(self):
+        checkins = {"2026-10-03": 1, "2026-10-05": 1, "2026-10-06": 1}  # Oct 4 missed
+        assert current_streak(checkins, as_of=date(2026, 10, 6)) == 2
 
-    def test_target_count(self, db):
-        hid = create_habit(db, 1, "Water", target_count_per_day=3)
-        # Only log twice on Oct 6 — below target of 3
-        log_checkin(db, 1, hid, "2026-10-06")
-        log_checkin(db, 1, hid, "2026-10-06")
-        assert current_streak(db, hid, target=3, as_of=date(2026, 10, 6)) == 0
+    def test_target_count(self):
+        # Only logged twice on Oct 6 — below the target of 3
+        assert current_streak({"2026-10-06": 2}, target=3, as_of=date(2026, 10, 6)) == 0
         # Third log meets the target
-        log_checkin(db, 1, hid, "2026-10-06")
-        assert current_streak(db, hid, target=3, as_of=date(2026, 10, 6)) == 1
+        assert current_streak({"2026-10-06": 3}, target=3, as_of=date(2026, 10, 6)) == 1
 
-    def test_grace_period_morning(self, db):
+    def test_grace_period_morning(self):
         """If today is scheduled but not done yet, streak counts from yesterday."""
+        checkins = {"2026-10-05": 1, "2026-10-06": 1}
+        assert current_streak(checkins, as_of=date(2026, 10, 7)) == 2
+
+    def test_missed_yesterday_is_zero(self):
+        """The grace period is one day only: missing yesterday breaks the streak."""
+        checkins = {"2026-10-04": 1, "2026-10-05": 1}
+        assert current_streak(checkins, as_of=date(2026, 10, 7)) == 0
+
+    def test_reads_checkins_from_habits_service(self, db):
+        """The seam between the domains: habits hands streaks a {date: count} dict."""
         hid = create_habit(db, 1, "Read")
-        # Done Oct 5 and 6, checking on Oct 7 morning (not done yet)
         log_checkin(db, 1, hid, "2026-10-05")
         log_checkin(db, 1, hid, "2026-10-06")
-        assert current_streak(db, hid, as_of=date(2026, 10, 7)) == 2
+        assert current_streak(checkins_by_date(db, hid), as_of=date(2026, 10, 6)) == 2
 
-    def test_custom_weekday_skips_rest_days(self, db):
+    def test_custom_weekday_skips_rest_days(self):
         """Mon/Wed/Fri habit: Tue and Thu are rest days, not gaps."""
-        # weekdays_mask: Mon=1, Wed=4, Fri=16  → 1+4+16 = 21
-        hid = create_habit(db, 1, "Gym", frequency="custom", weekdays_mask=21)
-        # Mon Oct 5, Wed Oct 7, Fri Oct 9 (2026: Oct 5 is Mon)
-        log_checkin(db, 1, hid, "2026-10-05")
-        log_checkin(db, 1, hid, "2026-10-07")
-        log_checkin(db, 1, hid, "2026-10-09")
-        assert current_streak(db, hid, as_of=date(2026, 10, 9)) == 3
+        checkins = {"2026-10-05": 1, "2026-10-07": 1, "2026-10-09": 1}  # Mon, Wed, Fri
+        assert current_streak(checkins, 1, "custom", MON_WED_FRI, as_of=date(2026, 10, 9)) == 3
 
 
 # ── Longest streak ──────────────────────────────────────
 
 class TestLongestStreak:
-    def test_no_checkins(self, db):
-        hid = create_habit(db, 1, "Read")
-        assert longest_streak(db, hid) == 0
+    def test_no_checkins(self):
+        assert longest_streak({}) == 0
 
-    def test_single_day(self, db):
-        hid = create_habit(db, 1, "Read")
-        log_checkin(db, 1, hid, "2026-10-01")
-        assert longest_streak(db, hid) == 1
+    def test_single_day(self):
+        assert longest_streak({"2026-10-01": 1}) == 1
 
-    def test_past_streak_longer_than_current(self, db):
-        hid = create_habit(db, 1, "Read")
-        # 5-day streak in the past
-        _log_n_days(db, 1, hid, 5, date(2026, 9, 30))
-        # gap, then 2-day current streak
-        log_checkin(db, 1, hid, "2026-10-05")
-        log_checkin(db, 1, hid, "2026-10-06")
-        assert longest_streak(db, hid) == 5
-        assert current_streak(db, hid, as_of=date(2026, 10, 6)) == 2
+    def test_past_streak_longer_than_current(self):
+        checkins = _n_days(5, date(2026, 9, 30))             # 5-day streak in the past
+        checkins.update({"2026-10-05": 1, "2026-10-06": 1})  # gap, then 2 days
+        assert longest_streak(checkins) == 5
+        assert current_streak(checkins, as_of=date(2026, 10, 6)) == 2
 
-    def test_custom_weekday_longest(self, db):
+    def test_custom_weekday_longest(self):
         """Longest streak for a Mon/Wed/Fri habit spanning rest days."""
-        hid = create_habit(db, 1, "Gym", frequency="custom", weekdays_mask=21)
-        log_checkin(db, 1, hid, "2026-10-05")  # Mon
-        log_checkin(db, 1, hid, "2026-10-07")  # Wed
-        assert longest_streak(db, hid) == 2
+        checkins = {"2026-10-05": 1, "2026-10-07": 1}  # Mon, Wed
+        assert longest_streak(checkins, 1, "custom", MON_WED_FRI) == 2
 
 
 # ── Completion rate ─────────────────────────────────────
 
 class TestCompletionRate:
-    def test_empty(self, db):
-        hid = create_habit(db, 1, "Read")
-        assert completion_rate(db, hid, as_of=date(2026, 10, 6)) == 0.0
+    def test_empty(self):
+        assert completion_rate({}, as_of=date(2026, 10, 6)) == 0.0
 
-    def test_perfect_week(self, db):
-        hid = create_habit(db, 1, "Read")
-        _log_n_days(db, 1, hid, 7, date(2026, 10, 6))
-        rate = completion_rate(db, hid, window_days=7, as_of=date(2026, 10, 6))
+    def test_perfect_week(self):
+        rate = completion_rate(_n_days(7, date(2026, 10, 6)), window_days=7,
+                               as_of=date(2026, 10, 6))
         assert rate == pytest.approx(1.0)
 
-    def test_half_window(self, db):
-        hid = create_habit(db, 1, "Read")
-        _log_n_days(db, 1, hid, 5, date(2026, 10, 6))
-        rate = completion_rate(db, hid, window_days=10, as_of=date(2026, 10, 6))
+    def test_half_window(self):
+        rate = completion_rate(_n_days(5, date(2026, 10, 6)), window_days=10,
+                               as_of=date(2026, 10, 6))
         assert rate == pytest.approx(0.5)
 
-    def test_new_habit_not_penalised(self, db):
+    def test_new_habit_not_penalised(self):
         """A habit created today and done today should show 100%, not 3%."""
-        hid = create_habit(db, 1, "Brand new")
-        # The habit's created_at defaults to date('now') in the schema.
-        # Force it to a known date so the test is deterministic.
-        db.execute("UPDATE habits SET created_at = '2026-10-06' WHERE id = ?", (hid,))
-        db.commit()
-        log_checkin(db, 1, hid, "2026-10-06")
-        rate = completion_rate(db, hid, window_days=30, as_of=date(2026, 10, 6))
+        rate = completion_rate({"2026-10-06": 1}, as_of=date(2026, 10, 6),
+                               created_on="2026-10-06")
+        assert rate == pytest.approx(1.0)
+
+    def test_no_scheduled_days_in_window(self):
+        """Window is just a Tuesday, which a Mon/Wed/Fri habit never has."""
+        rate = completion_rate({}, 1, "custom", MON_WED_FRI, window_days=1,
+                               as_of=date(2026, 10, 6))
+        assert rate == 0.0
+
+    def test_rest_day_checkin_does_not_inflate_rate(self):
+        """A Mon/Wed/Fri habit logged on a Tuesday can't go above 100%."""
+        checkins = {"2026-10-05": 1, "2026-10-06": 1, "2026-10-07": 1}  # Mon, Tue, Wed
+        rate = completion_rate(checkins, 1, "custom", MON_WED_FRI, window_days=3,
+                               as_of=date(2026, 10, 7))
         assert rate == pytest.approx(1.0)
 
 
@@ -151,29 +142,22 @@ class TestCompletionRate:
 class TestMilestones:
     def test_7_day_milestone(self, db):
         hid = create_habit(db, 1, "Read")
-        _log_n_days(db, 1, hid, 7, date(2026, 10, 6))
-        awarded = check_and_award_milestones(db, hid, as_of=date(2026, 10, 6))
-        assert 7 in awarded
+        assert 7 in check_and_award_milestones(db, hid, streak=7, as_of=date(2026, 10, 6))
 
     def test_no_duplicate_milestone(self, db):
         hid = create_habit(db, 1, "Read")
-        _log_n_days(db, 1, hid, 7, date(2026, 10, 6))
-        check_and_award_milestones(db, hid, as_of=date(2026, 10, 6))
+        check_and_award_milestones(db, hid, streak=7, as_of=date(2026, 10, 6))
         # Calling again should not re-award
-        second = check_and_award_milestones(db, hid, as_of=date(2026, 10, 6))
-        assert second == []
+        assert check_and_award_milestones(db, hid, streak=7, as_of=date(2026, 10, 6)) == []
 
     def test_multiple_milestones_at_once(self, db):
         hid = create_habit(db, 1, "Read")
-        _log_n_days(db, 1, hid, 14, date(2026, 10, 6))
-        awarded = check_and_award_milestones(db, hid, as_of=date(2026, 10, 6))
-        assert 7 in awarded
-        assert 14 in awarded
+        awarded = check_and_award_milestones(db, hid, streak=14, as_of=date(2026, 10, 6))
+        assert awarded == [7, 14]
 
     def test_milestones_for_habit(self, db):
         hid = create_habit(db, 1, "Read")
-        _log_n_days(db, 1, hid, 7, date(2026, 10, 6))
-        check_and_award_milestones(db, hid, as_of=date(2026, 10, 6))
+        check_and_award_milestones(db, hid, streak=7, as_of=date(2026, 10, 6))
         ms = milestones_for_habit(db, hid)
         assert len(ms) == 1
         assert ms[0]["streak_length"] == 7
@@ -181,15 +165,10 @@ class TestMilestones:
     def test_milestones_for_user(self, db):
         h1 = create_habit(db, 1, "Read")
         h2 = create_habit(db, 1, "Walk")
-        _log_n_days(db, 1, h1, 7, date(2026, 10, 6))
-        _log_n_days(db, 1, h2, 14, date(2026, 10, 6))
-        check_and_award_milestones(db, h1, as_of=date(2026, 10, 6))
-        check_and_award_milestones(db, h2, as_of=date(2026, 10, 6))
-        ms = milestones_for_user(db, 1)
-        assert len(ms) == 3  # 7 for h1, 7+14 for h2
+        check_and_award_milestones(db, h1, streak=7, as_of=date(2026, 10, 6))
+        check_and_award_milestones(db, h2, streak=14, as_of=date(2026, 10, 6))
+        assert len(milestones_for_user(db, 1)) == 3  # 7 for h1, 7+14 for h2
 
     def test_streak_too_short_no_milestone(self, db):
         hid = create_habit(db, 1, "Read")
-        _log_n_days(db, 1, hid, 5, date(2026, 10, 6))
-        awarded = check_and_award_milestones(db, hid, as_of=date(2026, 10, 6))
-        assert awarded == []
+        assert check_and_award_milestones(db, hid, streak=5, as_of=date(2026, 10, 6)) == []

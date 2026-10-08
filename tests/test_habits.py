@@ -23,7 +23,8 @@ def db():
         "VALUES (2, 'Other', 'User', 'other', 'x')"
     )
     conn.commit()
-    return conn
+    yield conn
+    conn.close()
 
 
 # ── Groups ──────────────────────────────────────────────

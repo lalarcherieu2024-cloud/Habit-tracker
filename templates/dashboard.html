@@ -1,2 +1,258 @@
-<h1>Welcome, {{ user.first_name }}!</h1>
-<p><a href="{{ url_for('logout') }}">Log out</a></p>
+{% extends "base.html" %}
+{% block title %}Dashboard · Habit Buddy{% endblock %}
+
+{% block head %}
+<style>
+  /* ---------- today card with progress ring ---------- */
+  .today { display: flex; align-items: center; gap: 16px; }
+  .ring { width: 72px; height: 72px; flex: none; transform: rotate(-90deg); }
+  .ring circle { fill: none; stroke-width: 7; }
+  .ring .track { stroke: var(--line); }
+  .ring .fill { stroke: var(--good); stroke-linecap: round; transition: stroke-dashoffset .6s ease; }
+  .today .big { font-size: 1.6rem; font-weight: 700; line-height: 1.1; }
+
+  /* ---------- habit cards ---------- */
+  .habits { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .habit {
+    display: flex; align-items: center; gap: 12px; padding: 12px;
+    border: 1px solid var(--line); border-radius: 12px; background: var(--card);
+    transition: border-color .2s, background .2s, transform .15s;
+  }
+  .habit:hover { transform: translateY(-1px); border-color: var(--accent); }
+  .habit.done { border-color: var(--good); background: color-mix(in srgb, var(--good) 8%, var(--card)); }
+  .habit.rest { opacity: .55; }
+  .habit .info { flex: 1; min-width: 0; }
+  .habit .name { font-weight: 600; overflow-wrap: anywhere; }
+  .tag { font-size: .72rem; padding: 1px 8px; border-radius: 99px; margin-left: 4px;
+         border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+
+  /* the streak flame: grey until today is done, then orange and flickering */
+  .streak { display: flex; flex-direction: column; align-items: center; width: 44px; flex: none; }
+  .flame { width: 30px; height: 30px; fill: var(--line); transition: fill .3s; }
+  .habit.done .flame { fill: url(#flameColor); transform-origin: 50% 90%;
+                       animation: flicker 1.8s ease-in-out infinite; }
+  .streak b { font-size: .95rem; line-height: 1; color: var(--muted); }
+  .habit.done .streak b { color: var(--accent); }
+  @keyframes flicker {
+    0%, 100% { transform: scale(1) rotate(0deg); }
+    50%      { transform: scale(1.08, .95) rotate(-2deg); }
+  }
+
+  /* dots for the daily target, e.g. 2 of 3 */
+  .pips { display: flex; gap: 4px; margin-top: 6px; }
+  .pip { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--good); transition: background .2s; }
+  .pip.on { background: var(--good); }
+
+  /* buttons */
+  .actions { display: flex; align-items: center; gap: 4px; flex: none; }
+  .actions form { margin: 0; }
+  .actions button { width: 40px; height: 40px; padding: 0; border-radius: 50%;
+                    border: none; background: transparent; color: var(--muted); font-size: 1rem; }
+  .actions button:hover { background: var(--bg); color: var(--text); }
+  .actions .log { width: 48px; height: 48px; font-size: 1.3rem; color: var(--good);
+                  border: 2px solid var(--good); background: transparent; }
+  .actions .log:hover { background: var(--good); color: #fff; }
+  .habit.done .actions .log { background: var(--good); color: #fff; }
+  button:active { transform: scale(.9); }
+
+  /* ---------- milestones ---------- */
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; }
+  .badge { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 99px;
+           background: color-mix(in srgb, var(--accent) 14%, transparent); font-size: .9rem; }
+  .badge svg { width: 16px; height: 16px; fill: url(#flameColor); }
+
+  /* ---------- collapsible forms ---------- */
+  details.card summary { cursor: pointer; font-weight: 600; list-style: none; }
+  details.card summary::before { content: "+ "; color: var(--accent); }
+  details.card[open] summary::before { content: "– "; }
+  details.card[open] summary { margin-bottom: 12px; }
+
+  /* weekday pills: hidden until "Only on" is picked (pure CSS, no JavaScript) */
+  .days { display: none; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
+  form:has(input[value=custom]:checked) .days { display: flex; }
+  .days input { position: absolute; opacity: 0; }
+  .days span { display: inline-block; padding: 6px 12px; border-radius: 99px; cursor: pointer;
+               border: 1px solid var(--line); transition: background .15s, color .15s; }
+  .days input:checked + span { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .days input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .choice { display: flex; gap: 16px; margin-bottom: 8px; }
+  .choice label { margin: 0; }
+
+  /* two-step confirm: the summary is the first button, the form appears when it's open */
+  .confirm { position: relative; }
+  .confirm summary { list-style: none; cursor: pointer; color: var(--muted);
+                     display: grid; place-items: center; min-width: 40px; height: 40px;
+                     padding: 0 8px; border-radius: 99px; }
+  .confirm summary::-webkit-details-marker { display: none; }
+  .confirm summary:hover, .confirm[open] summary { background: var(--bg); color: var(--text); }
+  .confirm form { position: absolute; right: 0; top: 44px; z-index: 1; white-space: nowrap;
+                  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+                  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+                  box-shadow: 0 6px 20px rgba(0,0,0,.12); font-size: .9rem; }
+  .confirm .yes, .actions .confirm .yes { width: auto; height: auto; padding: 6px 12px; border-radius: 8px;
+                  background: var(--bad); color: #fff; font-size: .9rem; }
+
+  .groups { list-style: none; margin: 0 0 12px; padding: 0; }
+  .groups li { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
+  .groups form { margin: 0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .habit.done .flame { animation: none; }
+    .habit, .habit:hover, button:active { transform: none; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+{# One shared colour for every lit flame #}
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="flameColor" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#e2452b"/>
+      <stop offset=".6" stop-color="#f08a24"/>
+      <stop offset="1" stop-color="#ffd166"/>
+    </linearGradient>
+    <symbol id="flame" viewBox="0 0 24 24">
+      <path d="M12 2c1 3.5-1.5 5-1.5 7.5 0 1.4 1 2.5 2.3 2.5 1.6 0 2.4-1.3 2.1-3
+               2 1.5 3.6 4 3.6 6.6C18.5 19.6 15.6 22 12 22s-6.5-2.4-6.5-6.4C5.5 10.9 10 8 12 2z"/>
+    </symbol>
+  </defs>
+</svg>
+
+<h1>Hi, {{ user.first_name }}</h1>
+
+<section class="card today">
+  {% set ring = 163.4 %}  {# circumference of the circle: 2 × π × 26 #}
+  <svg class="ring" viewBox="0 0 64 64" aria-hidden="true">
+    <circle class="track" cx="32" cy="32" r="26"/>
+    <circle class="fill" cx="32" cy="32" r="26" stroke-dasharray="{{ ring }}"
+            stroke-dashoffset="{{ ring * (1 - done_count / total_count) if total_count else ring }}"/>
+  </svg>
+  <div>
+    <div class="muted">{{ today.strftime("%A %d %B") }}</div>
+    {% if total_count %}
+      <div class="big">{{ done_count }} / {{ total_count }}</div>
+      <div class="muted">
+        {% if done_count == total_count %}All done today. Nice!{% else %}habits done today{% endif %}
+      </div>
+    {% elif habits %}
+      <div class="big">Rest day</div><div class="muted">Nothing is due today</div>
+    {% else %}
+      <div class="big">Welcome!</div><div class="muted">Add your first habit below</div>
+    {% endif %}
+  </div>
+</section>
+
+{% if habits %}
+<section class="card">
+  <h2>Your habits</h2>
+  <ul class="habits">
+    {% for h in habits %}
+    <li class="habit{% if h.done %} done{% endif %}{% if not h.due_today %} rest{% endif %}">
+      <div class="streak" title="Current streak: {{ h.streak }} (best {{ h.best }})">
+        <svg class="flame" aria-hidden="true"><use href="#flame"/></svg>
+        <b>{{ h.streak }}</b>
+      </div>
+      <div class="info">
+        <div class="name">
+          {{ h.name }}
+          {% if h.group_name %}<span class="tag">{{ h.group_name }}</span>{% endif %}
+        </div>
+        <div class="muted">
+          {% if h.due_today %}{{ h.days }}{% else %}Rest day today{% endif %}
+          · best {{ h.best }} · {{ h.rate }}% last 30 days
+        </div>
+        {% if h.target > 1 %}
+          <div class="pips" aria-label="{{ h.today_count }} of {{ h.target }} today">
+            {% for i in range(h.target) %}<span class="pip{% if i < h.today_count %} on{% endif %}"></span>{% endfor %}
+          </div>
+        {% endif %}
+      </div>
+      <div class="actions">
+        <form method="post" action="{{ url_for('habit_undo', habit_id=h.id) }}">
+          <button title="Undo one" aria-label="Undo one {{ h.name }}">↩</button>
+        </form>
+        <form method="post" action="{{ url_for('habit_checkin', habit_id=h.id) }}">
+          <button class="log" title="Log it" aria-label="Log {{ h.name }}">✓</button>
+        </form>
+        {# Two steps instead of a pop-up: ✕ opens "Archive?", then Yes sends the form #}
+        <details class="confirm">
+          <summary title="Archive" aria-label="Archive {{ h.name }}">✕</summary>
+          <form method="post" action="{{ url_for('habit_archive', habit_id=h.id) }}">
+            <span>Archive?</span>
+            <button class="yes">Yes</button>
+          </form>
+        </details>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Milestones</h2>
+  {% if milestones %}
+    <div class="badges">
+      {% for m in milestones %}
+        <span class="badge" title="Earned {{ m.date }}">
+          <svg aria-hidden="true"><use href="#flame"/></svg>
+          {{ m.days }} days · <strong>{{ m.habit }}</strong>
+        </span>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="muted">Keep a streak going for 7 days to earn your first one.</div>
+  {% endif %}
+</section>
+
+<details class="card" {% if not habits %}open{% endif %}>
+  <summary>New habit</summary>
+  <form method="post" action="{{ url_for('habit_create') }}">
+    <label>Name <input type="text" name="name" maxlength="80" placeholder="Read" required></label>
+    <div class="row">
+      <label>Times per day <input type="number" name="target" min="1" max="10" value="1" required></label>
+      <label>Group
+        <select name="group_id">
+          <option value="">No group</option>
+          {% for grp in groups %}<option value="{{ grp.id }}">{{ grp.name }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="choice">
+      <label><input type="radio" name="frequency" value="daily" checked> Every day</label>
+      <label><input type="radio" name="frequency" value="custom"> Only on…</label>
+    </div>
+    <div class="days">
+      {% for i, name in weekdays %}
+        <label><input type="checkbox" name="weekdays" value="{{ i }}"><span>{{ name }}</span></label>
+      {% endfor %}
+    </div>
+    <button type="submit" class="primary">Add habit</button>
+  </form>
+</details>
+
+<details class="card">
+  <summary>Groups</summary>
+  {% if groups %}
+  <ul class="groups">
+    {% for grp in groups %}
+      <li>
+        {{ grp.name }}
+        <details class="confirm">
+          <summary aria-label="Delete group {{ grp.name }}">Delete</summary>
+          <form method="post" action="{{ url_for('group_delete', group_id=grp.id) }}">
+            <span>Habits stay, just ungrouped.</span>
+            <button class="yes">Yes, delete</button>
+          </form>
+        </details>
+      </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <form method="post" action="{{ url_for('group_create') }}" class="row">
+    <input type="text" name="name" maxlength="40" placeholder="e.g. Morning" required aria-label="Group name">
+    <button type="submit" style="flex: 0 0 auto">Add group</button>
+  </form>
+</details>
+{% endblock %}

@@ -1,33 +1,94 @@
 # Architecture Decision Records
 
 ## 1. Backend Language & Framework Choice
-Date: 2026-09-30
-Status: Decided
-Context: I needed a web framework that could serve pages, store data in SQLite, and run as one process. My app does two things — managing habits/check-ins and calculating streaks — and neither needs anything fancy like real-time updates.
-Decision: I went with Flask, Jinja2 templates, and plain SQL using Python's built-in `sqlite3` module. No ORM.
-Alternatives considered: **Django** — it comes with an ORM, admin panel, and migrations, but I only have five tables and no admin page. Most of Django would sit there unused, and the assignment actually penalizes picking it when Flask does the job. **FastAPI** — great for building JSON APIs, but my app serves HTML pages, not data to a JavaScript frontend. The async stuff it offers doesn't help when every request just reads or writes SQLite.
-Consequences: I have to write all the SQL myself, turn on foreign keys with `PRAGMA foreign_keys = ON`, and set up `row_factory` by hand. But in return I can see exactly what every query does. Flask keeps things small — few dependencies, few files, easy to walk through and explain.
+**Date:** 2026-09-30  
+**Status:** Decided
+
+**Context:** I needed a simple web app that could show pages, save data in SQLite, and run in one process. The app has two main jobs: managing habits/check-ins and calculating streaks.
+
+**Decision:** I used Flask, Jinja2 templates, and plain SQL with Python's built-in `sqlite3`. I did not use an ORM.
+
+**Alternatives considered:**
+- **Django** — it has more built-in features, but I only needed a small app with a few tables. Most of Django would be unnecessary.
+- **FastAPI** — good for APIs, but my app shows HTML pages, not a separate frontend.
+
+**Consequences:** I have to write the SQL myself and set up things like foreign keys and `row_factory` manually. The advantage is that the app stays small and easy to explain.
 
 ## 2. Keeping the Two Domains Separate
-Date: 2026-10-01
-Status: Decided
-Context: The app has two domains — Habits & Check-ins (creating, listing, and logging habits) and Streaks & Insights (calculating streaks and awarding milestones). I wanted to keep them loosely connected so they could become separate services later without rewriting everything.
-Decision: Each domain has its own folder and its own `service.py`. The habits service does all the creating, listing, archiving, and logging. When the streaks service needs check-in data, it gets it through `checkins_by_date()`, which just returns a dictionary like `{"2026-10-07": 2}`. The streak functions — `current_streak`, `longest_streak`, `completion_rate` — only do math on that dictionary. They never open the database. The only streaks function that touches the database is `check_and_award_milestones`, and it only writes to the `milestones` table, which belongs to the streaks domain.
-Alternatives considered: **Putting everything in one service file** — quicker to set up, but then both domains are mixed together and pulling them apart later means rewriting a lot of code. **Having the streaks service query the checkins table directly** — it would work, but then both services depend on the same table layout. Going through `checkins_by_date()` means the streaks service just sees dates and counts, and doesn't care how check-ins are stored underneath.
-Consequences: If these ever become microservices, the only thing that changes is `checkins_by_date()` — it turns into an API call instead of a database query, and all the streak math stays exactly the same. The downside is a bit more setup (two folders, two files), but each domain can be tested on its own and is easy to follow.
+**Date:** 2026-10-01  
+**Status:** Decided
+
+**Context:** The app has two parts: **Habits & Check-ins** and **Streaks & Insights**. I wanted them to stay loosely connected so they could be split into separate services later.
+
+**Decision:** Each domain has its own folder and `service.py`. The habits service handles creating, listing, archiving, and logging. The streaks service gets check-in data through `checkins_by_date()`, which returns a simple dictionary like `{"2026-10-07": 2}`. The streak functions only work with that data and do not touch the database. The only streaks function that uses the database is `check_and_award_milestones`, and it only writes to the `milestones` table.
+
+**Alternatives considered:**
+- **One big service file** — easier at the start, but harder to split later.
+- **Letting streaks query the check-ins table directly** — it would work, but then the two domains would depend too much on the same table layout.
+
+**Consequences:** If I ever split this into microservices, `checkins_by_date()` would just become an API call. The downside is a little more setup now, but the code is cleaner and easier to test.
 
 ## 3. Data Model: Count-Based Check-ins and Per-Habit Milestones
-Date: 2026-10-01
-Status: Decided
-Context: Some habits need more than one completion per day (like "drink 8 glasses of water"), and the app needs to track streaks and give out milestone badges. The schema had to handle both of those.
-Decision: The `checkins` table has one row per habit per day, with a `count` column instead of a simple yes/no. A day counts as done when `count >= target_count_per_day`. The `milestones` table links to `habit_id` (not directly to `user_id`), and has a `UNIQUE(habit_id, streak_length)` constraint so each habit can only earn each milestone once. To get all milestones for a user, I join through the `habits` table.
-Alternatives considered: **A boolean column for check-ins** — simpler, but then "read twice a day" doesn't work unless you add extra rows or another table. One row with a count handles it cleanly — one `SELECT` gives you everything the streak calculator needs. **Putting `user_id` directly on milestones** — would make the "show all milestones" query simpler, but it repeats ownership info that already lives on the habit. With `ON DELETE CASCADE` on the foreign key, deleting a habit automatically cleans up its milestones too.
-Consequences: `log_checkin` uses `ON CONFLICT ... DO UPDATE SET count = count + 1`, so you never get duplicate rows for the same habit on the same day. The streaks service can figure out everything just from the check-in counts. The trade-off is that `milestones_for_user` needs a JOIN through habits, but the indexes keep it fast.
+**Date:** 2026-10-01  
+**Status:** Decided
+
+**Context:** Some habits need more than one check per day, like "drink 8 glasses of water." I also needed streaks and milestone badges.
+
+**Decision:** The `checkins` table stores one row per habit per day, with a `count` column instead of a simple yes/no. A habit counts as done when `count >= target_count_per_day`. The `milestones` table links to `habit_id` instead of `user_id`, and `UNIQUE(habit_id, streak_length)` makes sure each milestone is only earned once per habit. To get all milestones for a user, I join through the `habits` table.
+
+**Alternatives considered:**
+- **A boolean check-in field** — simpler, but not enough for habits with multiple completions per day.
+- **Putting `user_id` directly on milestones** — easier to query, but it repeats data that already exists on the habit.
+
+**Consequences:** `log_checkin` uses `ON CONFLICT ... DO UPDATE SET count = count + 1`, so there are no duplicate rows for the same habit and day. The streak code can work from the check-in counts alone.
 
 ## 4. Testing Approach
-Date: 2026-10-10
-Status: Decided
-Context: I needed at least 70% test coverage on the core logic, measured with pytest-cov. I had to decide what to test properly, what to test lightly, and what to skip.
-Decision: I test the service functions directly — `habits/service.py`, `streaks/service.py`, and `auth/service.py`. Each test file creates a temporary in-memory SQLite database, loads the real schema, inserts a test user, and then calls the service functions. No HTTP requests, no Flask test client. Helper functions like `_log_n_days` keep the tests short and readable.
-Alternatives considered: **Testing through Flask routes** — that would also cover the routing and session handling, but most of the real logic lives in the service functions, not the routes. Route tests are slower, break more easily when you change a template, and don't tell you much about whether the business logic is correct. **Mocking the database** — faster, but then you miss real SQL bugs like a wrong column name or a missing foreign key. Using in-memory SQLite with the real schema catches those because the tests run the exact same SQL the app runs.
-Consequences: The three service files have 100% coverage, which is where all the graded logic lives. The routes and templates aren't tested automatically, so I have to check those by hand — but template bugs are easy to spot in the browser. The trade-off works: the assignment grades "core business logic" coverage, and that all lives in the service layer.
+**Date:** 2026-10-10  
+**Status:** Decided
+
+**Context:** I needed at least 70% coverage on the main logic using `pytest-cov`. I had to decide what to test properly and what to keep simple.
+
+**Decision:** I test the service functions directly in `habits/service.py`, `streaks/service.py`, and `auth/service.py`. Each test file makes a temporary in-memory SQLite database, loads the real schema, adds a test user, and then calls the service functions. I do not use Flask route tests. Helper functions like `_log_n_days` keep the tests short.
+
+**Alternatives considered:**
+- **Testing through Flask routes** — this would cover the pages too, but most of the real logic is in the service layer.
+- **Mocking the database** — faster, but it would miss real SQL mistakes like wrong column names or broken foreign keys.
+
+**Consequences:** The service files have 100% coverage, which is where the graded logic lives. The routes and templates are checked manually in the browser.
+
+## 5. Not Building the Desktop Companion App
+**Date:** 2026-10-11  
+**Status:** Decided
+
+**Context:** I wanted my cat Chabal to behave like a desktop pet that stays on top of other windows and sends reminders when a habit is still undone. That would need a separate always-running app.
+
+**Decision:** I did not build the desktop version. The cat only lives inside the web app, on the dashboard, login page, and new-habit page. Its mood comes from `cat_mode()` in `app.py` based on today's progress.
+
+**Alternatives considered:**
+- **A Tauri or Electron app** — this would feel more like a real desktop pet, but it would also add a second process and more setup.
+- **Browser push notifications** — this would still need background service worker support and extra permissions.
+
+**Consequences:** Everything stays in one Flask app, which fits the assignment better. The cat is just JavaScript and sprite images, and the streak logic could still be reused later if I ever build a desktop version.
+
+# What I learned
+
+**Keeping each feature in its own folder makes it easier to split later.**  
+`habits/`, `streaks/`, and `auth/` already match the way the app could be separated into services.
+
+**SQLite does not enforce foreign keys unless you turn them on.**  
+`db.connect` runs `PRAGMA foreign_keys = ON`, so bad links get rejected.
+
+**Indexes do not happen automatically in SQLite.**  
+I had to add them myself on the columns I search and join most often.
+
+**Schema setup should be safe to run more than once.**  
+`db.init_schema` checks `sqlite_master` first, so restarting the app does not reset anything.
+
+**Production and dev dependencies should be separate.**  
+`requirements.txt` has the app only, and `requirements-dev.txt` adds the testing tools.
+
+**Tests have to match the real schema exactly.**  
+The `NOT NULL` error happened because the test users were missing required fields. The fixtures need to match `schema.sql`.
+
+**Jinja templates are safer than building HTML by hand.**  
+They escape special characters automatically, so user input shows as text instead of code.

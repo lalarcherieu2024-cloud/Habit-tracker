@@ -22,9 +22,26 @@
            font: 16px/1.5 "Figtree", system-ui, sans-serif; }
     nav { display: flex; align-items: center; gap: 16px; padding: 14px 20px;
           background: var(--nav); border-bottom: 1px solid var(--line); }
-    nav .brand { font-weight: 600; font-size: 1.1rem; margin-right: auto; color: var(--text); text-decoration: none; }
-    nav a { color: var(--text); text-decoration: none; }
-    nav a:hover { color: var(--accent); }
+    nav .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.1rem;
+                 color: var(--text); text-decoration: none; }
+    nav .brand img { width: 36px; height: 36px; border-radius: 50%; background: var(--text);
+                     image-rendering: pixelated; object-fit: cover; object-position: 50% 20%; }
+    nav .links { display: flex; gap: 4px; margin-right: auto; margin-left: 12px; }
+    nav .links a, nav > a { color: var(--text); text-decoration: none; padding: 6px 14px; border-radius: 99px; }
+    nav .links a:hover, nav .links a.on { background: var(--accent-soft); }
+    nav .spacer { margin-right: auto; }
+    @media (max-width: 600px) { nav .links { display: none; } nav .new { margin-left: auto; } }
+    nav .new { display: flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 99px;
+               background: var(--accent); color: var(--ink); font-weight: 600; text-decoration: none; }
+    nav .new:hover { background: #bccde0; }
+    /* the initial in a circle opens a small menu with "Log out" */
+    .account { position: relative; }
+    .account summary { list-style: none; cursor: pointer; width: 36px; height: 36px; border-radius: 50%;
+                       display: grid; place-items: center; font-weight: 600; border: 1px solid var(--line); }
+    .account summary::-webkit-details-marker { display: none; }
+    .account a { position: absolute; right: 0; top: 44px; z-index: 2; white-space: nowrap; padding: 8px 14px;
+                 background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+                 color: var(--text); text-decoration: none; }
     main { max-width: 560px; margin: 0 auto; padding: 20px; }
     @media (min-width: 900px) { main.wide { max-width: 1040px; padding: 32px 40px; } }
     h1 { font-size: 2.2rem; font-weight: 400; margin: 4px 0 16px; line-height: 1.1; }
@@ -72,10 +89,21 @@
 </head>
 <body>
   <nav>
-    <a class="brand" href="{{ url_for('index') }}">Habit Buddy</a>
-    {% if session.user_id %}
-      <a href="{{ url_for('logout') }}">Log out</a>
+    <a class="brand" href="{{ url_for('index') }}">
+      <img src="{{ url_for('static', filename='sprites/sit_front.png') }}" alt="">Habit Buddy
+    </a>
+    {% if g.user %}
+      <div class="links">
+        <a href="{{ url_for('dashboard') }}" {% if request.endpoint == 'dashboard' %}class="on"{% endif %}>Today</a>
+        <a href="{{ url_for('dashboard') }}#progress">Progress</a>
+      </div>
+      <a class="new" href="{{ url_for('habit_new') }}">+ New habit</a>
+      <details class="account">
+        <summary title="{{ g.user.first_name }} {{ g.user.last_name }}">{{ g.user.first_name[:1] | upper }}</summary>
+        <a href="{{ url_for('logout') }}">Log out</a>
+      </details>
     {% else %}
+      <span class="spacer"></span>
       <a href="{{ url_for('login') }}">Log in</a>
       <a href="{{ url_for('register') }}">Register</a>
     {% endif %}

@@ -125,6 +125,30 @@ def completion_rate(checkins, target=1, frequency="daily", weekdays_mask=None,
     return hit / scheduled
 
 
+def week_states(checkins, target=1, frequency="daily", weekdays_mask=None,
+                as_of=None, created_on=None):
+    """The current week, Monday to Sunday, as one word per day for the
+    "This week" grid: "done", "missed", "rest" (not scheduled), "today",
+    "today-done", or "none" (after today, or before the habit existed)."""
+    as_of = as_of or date.today()
+    created = date.fromisoformat(created_on[:10]) if created_on else None
+    done = set(_completed_days(checkins, target))
+    monday = as_of - timedelta(days=as_of.weekday())
+
+    states = []
+    for i in range(7):
+        d = monday + timedelta(days=i)
+        if d > as_of or (created and d < created):
+            states.append("none")
+        elif not is_scheduled(d, frequency, weekdays_mask):
+            states.append("rest")
+        elif d == as_of:
+            states.append("today-done" if d in done else "today")
+        else:
+            states.append("done" if d in done else "missed")
+    return states
+
+
 def check_and_award_milestones(db, habit_id, streak, as_of=None):
     """Awards any milestones the current streak has reached that this habit
     doesn't have yet. Returns a list of the new day-counts."""

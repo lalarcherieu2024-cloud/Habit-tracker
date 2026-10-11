@@ -2,65 +2,67 @@
 {% block title %}New habit · Habit Buddy{% endblock %}
 
 {% block head %}
-<script src="{{ url_for('static', filename='buddy-cat.js') }}" defer></script>
 <style>
-  .back { display: flex; align-items: center; gap: 16px; margin-bottom: 4px; }
-  .back a { text-decoration: none; color: var(--text); }
-  .back h1 { margin: 0; font-size: 1.4rem; font-weight: 600; }
-  buddy-cat { display: block; width: 100%; --color-divider: var(--line); }
+  .sheet { background: var(--card); border-radius: 22px; padding: 24px 28px 28px; }
+  .sheet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+  .sheet-head h1 { font-size: 1.5rem; font-weight: 700; margin: 0; }
+  .close { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+           color: var(--text); text-decoration: none; font-size: 1.2rem; }
+  .close:hover { background: var(--accent-soft); }
+  .field { margin-bottom: 18px; }
+  .field > .title { display: block; color: var(--text); font-weight: 600; margin-bottom: 8px; }
+  .hint { font-size: .85rem; color: var(--muted); margin-top: 8px; }
 
-  /* "Every day | Only on…" as a segmented control made of two radio buttons */
-  .seg { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin: 4px 0 12px; }
-  .seg label { flex: 1; margin: 0; }
-  .seg input, .days input { position: absolute; opacity: 0; }
-  .seg span { display: block; text-align: center; padding: 10px; cursor: pointer; color: var(--text); }
-  .seg input:checked + span { outline: 1px solid var(--text); outline-offset: -1px; border-radius: 6px; }
-  .seg input:focus-visible + span, .days input:focus-visible + span { outline: 2px solid var(--accent); }
-
-  /* weekday pills: only shown when "Only on…" is picked (pure CSS, no JavaScript) */
-  .days { display: none; gap: 6px; margin: 0 0 16px; }
-  form:has(input[value=custom]:checked) .days { display: flex; }
-  .days label { flex: 1; margin: 0; }
-  .days span { display: block; text-align: center; padding: 8px 0; border-radius: 6px; cursor: pointer;
-               border: 1px solid var(--line); color: var(--text); }
-  .days input:checked + span { border-color: var(--accent); color: var(--ink); background: var(--accent); }
-  .hint { margin: -4px 0 16px; }
+  /* group and day choices drawn as pills; the real radio/checkbox is hidden behind them */
+  .choices { display: flex; flex-wrap: wrap; gap: 8px; }
+  .choices label { margin: 0; }
+  .choices input { position: absolute; opacity: 0; }
+  .choices span { display: inline-block; padding: 8px 16px; border-radius: 99px; cursor: pointer;
+                  border: 1px solid var(--line); color: var(--text); font-weight: 600; }
+  .choices.days span { width: 42px; padding: 8px 0; text-align: center; }
+  .choices input:checked + span { background: var(--accent); border-color: var(--accent); color: var(--ink); }
+  .choices input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .target { width: 120px; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="back">
-  <a href="{{ url_for('dashboard') }}" aria-label="Back to today">‹ Today</a>
-  <h1>New habit</h1>
-</div>
+<section class="sheet">
+  <div class="sheet-head">
+    <h1>New habit</h1>
+    <a class="close" href="{{ url_for('dashboard') }}" aria-label="Close">✕</a>
+  </div>
 
-<buddy-cat mode="front" base="{{ url_for('static', filename='sprites/') }}"
-           scale="1.6" height="120" start="0.8" title="{{ cat_name }} is watching"></buddy-cat>
-
-<form method="post" action="{{ url_for('habit_create') }}">
-  <label>Name <input type="text" name="name" maxlength="80" placeholder="Read" required autofocus></label>
-  <div class="row">
-    <label>Times per day <input type="number" name="target" min="1" max="10" value="1" required></label>
-    <label>Group
-      <select name="group_id">
-        <option value="">No group</option>
-        {% for grp in groups %}<option value="{{ grp.id }}">{{ grp.name }}</option>{% endfor %}
-      </select>
+  <form method="post" action="{{ url_for('habit_create') }}">
+    <label class="field"><span class="title">What do you want to do?</span>
+      <input type="text" name="name" maxlength="80" placeholder="e.g. Meditate" required autofocus>
     </label>
-  </div>
 
-  <div class="muted">Repeats</div>
-  <div class="seg" role="radiogroup" aria-label="Repeats">
-    <label><input type="radio" name="frequency" value="daily" checked><span>Every day</span></label>
-    <label><input type="radio" name="frequency" value="custom"><span>Only on…</span></label>
-  </div>
-  <div class="days">
-    {% for i, name in weekdays %}
-      <label><input type="checkbox" name="weekdays" value="{{ i }}" aria-label="{{ name }}"><span aria-hidden="true">{{ name[0] }}</span></label>
-    {% endfor %}
-  </div>
-  <p class="muted hint">On other days it's a rest day, which won't break the streak.</p>
+    <div class="field">
+      <span class="title">Group</span>
+      <div class="choices" role="radiogroup" aria-label="Group">
+        <label><input type="radio" name="group_id" value="" checked><span>No group</span></label>
+        {% for grp in groups %}
+          <label><input type="radio" name="group_id" value="{{ grp.id }}"><span>{{ grp.name }}</span></label>
+        {% endfor %}
+      </div>
+    </div>
 
-  <button type="submit" class="primary">Add habit</button>
-</form>
+    <label class="field"><span class="title">How many times a day?</span>
+      <input class="target" type="number" name="target" min="1" max="10" value="1" required>
+    </label>
+
+    <div class="field">
+      <span class="title">Which days?</span>
+      <div class="choices days">
+        {% for i, name in weekdays %}
+          <label><input type="checkbox" name="weekdays" value="{{ i }}" checked aria-label="{{ name }}"><span aria-hidden="true">{{ name[0] }}</span></label>
+        {% endfor %}
+      </div>
+      <p class="hint">Tap a day to make it a rest day. Rest days never break a streak.</p>
+    </div>
+
+    <button type="submit" class="primary">Add habit</button>
+  </form>
+</section>
 {% endblock %}

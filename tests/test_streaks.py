@@ -9,7 +9,7 @@ from datetime import date, timedelta
 from db import connect, init_schema
 from habits.service import checkins_by_date, create_habit, log_checkin
 from streaks.service import (
-    current_streak, longest_streak, completion_rate,
+    current_streak, longest_streak, completion_rate, week_states,
     check_and_award_milestones, milestones_for_habit, milestones_for_user,
 )
 
@@ -172,3 +172,30 @@ class TestMilestones:
     def test_streak_too_short_no_milestone(self, db):
         hid = create_habit(db, 1, "Read")
         assert check_and_award_milestones(db, hid, streak=5, as_of=date(2026, 10, 6)) == []
+
+
+# ── This week grid ──────────────────────────────────────
+
+class TestWeekStates:
+    # 2026-10-07 is a Wednesday, so the week is Mon 5 Oct .. Sun 11 Oct
+
+    def test_daily_habit_midweek(self):
+        checkins = {"2026-10-05": 1, "2026-10-07": 1}  # Mon done, Tue missed, Wed (today) done
+        assert week_states(checkins, as_of=date(2026, 10, 7)) == [
+            "done", "missed", "today-done", "none", "none", "none", "none"]
+
+    def test_today_not_done_yet(self):
+        assert week_states({}, as_of=date(2026, 10, 7))[2] == "today"
+
+    def test_target_count(self):
+        # Monday logged once, but the target is 2, so it counts as missed
+        assert week_states({"2026-10-05": 1}, target=2, as_of=date(2026, 10, 7))[0] == "missed"
+
+    def test_custom_habit_rest_days(self):
+        checkins = {"2026-10-05": 1}  # Mon/Wed/Fri habit
+        assert week_states(checkins, 1, "custom", MON_WED_FRI, as_of=date(2026, 10, 7))[:3] == [
+            "done", "rest", "today"]
+
+    def test_days_before_creation_are_blank(self):
+        states = week_states({}, as_of=date(2026, 10, 7), created_on="2026-10-06")
+        assert states[:3] == ["none", "missed", "today"]

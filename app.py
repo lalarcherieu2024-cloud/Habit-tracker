@@ -9,7 +9,7 @@ Habit Buddy — main Flask application.
 """
 
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from functools import wraps
 
 from flask import (
@@ -19,12 +19,12 @@ from flask import (
 from db import connect, init_schema
 from auth.service import register_user, authenticate_user, get_user_by_id
 from habits.service import (
-    create_group, list_groups, delete_group,
+    create_group, list_groups, delete_group, set_habit_group,
     create_habit, archive_habit, list_habits, get_owned_habit,
     log_checkin, undo_checkin, checkins_by_date,
 )
 from streaks.service import (
-    is_scheduled, current_streak, longest_streak, completion_rate,
+    is_scheduled, current_streak, longest_streak, completion_rate, week_states,
     check_and_award_milestones, milestones_for_user,
 )
 
@@ -139,9 +139,13 @@ def habit_stats(db, habit, today):
     today_count = checkins.get(today.isoformat(), 0)
 
     if frequency == "custom":
-        days = ", ".join(d for i, d in enumerate(WEEKDAYS) if mask & (1 << i))
+        days = " · ".join(d for i, d in enumerate(WEEKDAYS) if mask & (1 << i))
     else:
         days = "Every day"
+
+    # For a habit resting today: the next day it's due, e.g. "Tuesday"
+    next_day = next((today + timedelta(days=i)).strftime("%A") for i in range(1, 8)
+                    if is_scheduled(today + timedelta(days=i), frequency, mask))
 
     return {
         "id": habit["id"],
@@ -156,6 +160,9 @@ def habit_stats(db, habit, today):
         "best": longest_streak(checkins, target, frequency, mask),
         "rate": round(completion_rate(checkins, target, frequency, mask, as_of=today,
                                       created_on=habit["created_at"]) * 100),
+        "week": week_states(checkins, target, frequency, mask, as_of=today,
+                            created_on=habit["created_at"]),
+        "next_day": next_day,
     }
 
 
@@ -178,6 +185,7 @@ def dashboard():
     db = get_db()
     user = g.user
     today = date.today()
+    hour = datetime.now().hour
 
     habit_data = [habit_stats(db, h, today) for h in list_habits(db, user["id"])]
     groups = list_groups(db, user["id"])
@@ -189,13 +197,33 @@ def dashboard():
     due = [h for h in habit_data if h["due_today"]]
     done_count = sum(1 for h in due if h["done"])
 
-    # ?group=<id> shows only that group's habits in the list (the summary above still
-    # counts all of them). Only the user's own groups are in group_names, so another
-    # user's group id is simply ignored.
+    # Filters from the address bar: ?group=<id> picks a group tab, ?show=todo|done picks
+    # a tab above the list. Only the user's own groups are in group_names, so another
+    # user's group id is simply ignored. The summary at the top always counts everything.
     group_id = request.args.get("group", type=int)
     if group_id not in group_names:
         group_id = None
-    shown = [h for h in habit_data if group_id is None or h["group_id"] == group_id]
+    show = request.args.get("show", "all")
+    if show not in ("all", "todo", "done"):
+        show = "all"
+    in_group = [h for h in due if group_id is None or h["group_id"] == group_id]
+    shown = [h for h in in_group if show == "all" or h["done"] == (show == "done")]
+    resting = [h for h in habit_data
+               if not h["due_today"] and (group_id is None or h["group_id"] == group_id)]
+
+    # The list is split into one section per group (in tab order), then ungrouped habits
+    sections = []
+    for gid, name in list(group_names.items()) + [(None, "No group")]:
+        items = [h for h in shown if h["group_id"] == gid]
+        group_due = [h for h in in_group if h["group_id"] == gid]
+        if items:
+            sections.append({"name": name, "items": items,
+                             "done": sum(1 for h in group_due if h["done"]), "due": len(group_due)})
+
+    # "This week" panel: share of past scheduled days that were done (today not counted)
+    week = [state for h in habit_data for state in h["week"]]
+    past = week.count("done") + week.count("missed")
+    week_pct = round(100 * week.count("done") / past) if past else 0
 
     # Milestones with the habit's name, newest first
     habit_names = {h["id"]: h["name"] for h in habit_data}
@@ -209,16 +237,32 @@ def dashboard():
         "dashboard.html",
         user=user,
         habits=habit_data,
-        shown=shown,
+        due=due,
+        sections=sections,
+        resting=resting,
         groups=groups,
+        group_counts={gid: sum(1 for h in habit_data if h["group_id"] == gid) for gid in group_names},
+        group_id=group_id,
         group_filter=group_names.get(group_id),
+        show=show,
+        tab_counts={"all": len(in_group), "todo": sum(1 for h in in_group if not h["done"]),
+                    "done": sum(1 for h in in_group if h["done"])},
+        keep={"group": group_id, "show": show if show != "all" else None},
+        week_pct=week_pct,
+        greeting="Good morning" if hour < 12 else "Good afternoon" if hour < 18 else "Good evening",
         milestones=milestones,
         done_count=done_count,
         total_count=len(due),
         today=today,
-        cat_mode=cat_mode(done_count, len(due), datetime.now().hour),
+        cat_mode=cat_mode(done_count, len(due), hour),
         cat_cue=session.pop("cat_cue", ""),   # set by habit_checkin, played once
     )
+
+
+def back_to_dashboard():
+    """Redirects to the dashboard, keeping the ?group= and ?show= the form was sent from."""
+    return redirect(url_for("dashboard", group=request.args.get("group"),
+                            show=request.args.get("show")))
 
 
 @app.route("/habits/new")
@@ -243,12 +287,13 @@ def habit_create():
     target = request.form.get("target", "1")
     target = int(target) if target.isdigit() else 0   # 0 is rejected by create_habit
 
-    # Checked weekday boxes (0 = Mon … 6 = Sun) become one bitmask, e.g. Mon+Wed+Fri = 21
-    frequency = request.form.get("frequency", "daily")
-    mask = None
-    if frequency == "custom":
-        days = {int(d) for d in request.form.getlist("weekdays") if d.isdigit() and int(d) < 7}
-        mask = sum(1 << d for d in days)
+    # Ticked weekday boxes (0 = Mon … 6 = Sun): all seven means every day, otherwise
+    # they become one bitmask, e.g. Mon+Wed+Fri = 1+4+16 = 21 (none ticked is rejected)
+    days = {int(d) for d in request.form.getlist("weekdays") if d.isdigit() and int(d) < 7}
+    if request.form.get("frequency") == "daily" or len(days) == 7:
+        frequency, mask = "daily", None
+    else:
+        frequency, mask = "custom", sum(1 << d for d in days)
 
     try:
         create_habit(db, g.user["id"], name, frequency=frequency, weekdays_mask=mask,
@@ -267,7 +312,7 @@ def habit_checkin(habit_id):
         log_checkin(db, g.user["id"], habit_id)
     except ValueError as e:
         flash(str(e), "error")
-        return redirect(url_for("dashboard"))
+        return back_to_dashboard()
 
     # A check-in can push the streak over a milestone, so check right after logging
     habit = get_owned_habit(db, g.user["id"], habit_id)
@@ -280,7 +325,7 @@ def habit_checkin(habit_id):
         session["cat_cue"] = "jump"
     for days in check_and_award_milestones(db, habit_id, stats["streak"]):
         flash(f"Milestone! {days}-day streak on {habit['name']}", "success")
-    return redirect(url_for("dashboard"))
+    return back_to_dashboard()
 
 
 @app.route("/habits/<int:habit_id>/undo", methods=["POST"])
@@ -291,7 +336,7 @@ def habit_undo(habit_id):
         undo_checkin(db, g.user["id"], habit_id)
     except ValueError as e:
         flash(str(e), "error")
-    return redirect(url_for("dashboard"))
+    return back_to_dashboard()
 
 
 @app.route("/habits/<int:habit_id>/archive", methods=["POST"])
@@ -299,7 +344,20 @@ def habit_undo(habit_id):
 def habit_archive(habit_id):
     db = get_db()
     archive_habit(db, g.user["id"], habit_id)
-    return redirect(url_for("dashboard"))
+    return back_to_dashboard()
+
+
+@app.route("/habits/<int:habit_id>/move", methods=["POST"])
+@login_required
+def habit_move(habit_id):
+    """Moves a habit into another group, or out of any group ("No group")."""
+    group_id = request.form.get("group_id", "")
+    try:
+        set_habit_group(get_db(), g.user["id"], habit_id,
+                        int(group_id) if group_id.isdigit() else None)
+    except ValueError as e:
+        flash(str(e), "error")
+    return back_to_dashboard()
 
 
 @app.route("/groups/create", methods=["POST"])
@@ -307,10 +365,11 @@ def habit_archive(habit_id):
 def group_create():
     db = get_db()
     try:
-        create_group(db, g.user["id"], request.form.get("name", ""))
+        new_id = create_group(db, g.user["id"], request.form.get("name", ""))
     except ValueError as e:
         flash(str(e), "error")
-    return redirect(url_for("dashboard"))
+        return redirect(url_for("dashboard"))
+    return redirect(url_for("dashboard", group=new_id))   # open the new group's tab
 
 
 @app.route("/groups/<int:group_id>/delete", methods=["POST"])

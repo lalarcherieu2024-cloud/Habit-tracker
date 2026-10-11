@@ -33,7 +33,9 @@ def register_user(db, first_name, last_name, username, password):
     if existing:
         raise ValueError("username already taken")
 
-    hashed = generate_password_hash(password)
+    # pbkdf2 works on every Python build; Werkzeug's default (scrypt) is missing
+    # from some, e.g. the Python 3.9 that comes with macOS
+    hashed = generate_password_hash(password, method="pbkdf2:sha256")
     cur = db.execute(
         """INSERT INTO users (first_name, last_name, username, password_hash)
            VALUES (?, ?, ?, ?)""",

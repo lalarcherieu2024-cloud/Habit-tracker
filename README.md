@@ -1,13 +1,14 @@
 # Habit Buddy
 
-A mobile-first habit tracker built with Flask and SQLite. Users create an account, define habits, and check them off daily. The app tracks streaks, completion rates, and awards milestones at 7/14/30/60/100/365-day streaks.
+A habit tracker built with Flask and SQLite that works on phones and laptops. Users create an account, define habits, and check them off daily. The app tracks streaks, completion rates, and awards milestones at 7/14/30/60/100/365-day streaks.
 
 ## Features
 
 - **Habits & Check-ins** — create, group, archive, and log habits daily. Supports multi-count habits (e.g. "drink 8 glasses of water") and custom weekday schedules (e.g. Mon/Wed/Fri).
 - **Streaks & Insights** — current streak, longest streak, and 30-day completion rate for each habit. Milestone badges at streak thresholds.
 - **Accounts** — session-based login with password hashing (Werkzeug). Each user sees only their own habits.
-- **Groups** — organise habits into named groups on the dashboard.
+- **Groups** — organise habits into named groups, filter the dashboard by group, and move a habit between groups.
+- **Companion** — Chabal, a pixel-art cat made from a photo of my cat, reacts to today's progress.
 
 ## Quick Start
 
@@ -35,7 +36,7 @@ Open [http://localhost:5001](http://localhost:5001) in your browser. Register a 
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `5001` | Port the app listens on |
-| `DATA_DIR` | project root | Folder where `habits.db` is created |
+| `DATA_DIR` | project root | Folder where `habits.db` is created (the folder is created if it doesn't exist) |
 | `SECRET_KEY` | `dev-secret-change-in-production` | Flask session signing key |
 
 All configuration is through environment variables — no `.env` file required.
@@ -75,7 +76,8 @@ habit-tracker/
 │   ├── test_auth.py
 │   ├── test_habits.py
 │   ├── test_streaks.py
-│   └── test_db.py
+│   ├── test_db.py
+│   └── conftest.py         # shared in-memory database fixture
 ├── requirements.txt        # production dependencies
 ├── requirements-dev.txt    # adds pytest + pytest-cov
 ├── ADR.md                  # architecture decision records
@@ -93,7 +95,7 @@ Foreign keys are enforced via `PRAGMA foreign_keys = ON` on every connection.
 
 ## Testing
 
-Tests cover the three service modules (habits, streaks, auth) using in-memory SQLite with the real schema. No Flask test client or HTTP calls — the tests call service functions directly.
+Tests cover the three service modules (habits, streaks, auth) and call the service functions directly — no Flask test client or HTTP calls. Habits, auth and milestone tests use an in-memory SQLite database with the real schema; the streak calculations are pure functions, so their tests pass plain `{date: count}` dictionaries.
 
 ```bash
 # Run all tests with coverage
@@ -105,11 +107,13 @@ Coverage result:
 ```
 Name                  Stmts   Miss  Cover
 ------------------------------------------
-auth/service.py          28      0   100%
+auth/service.py          30      0   100%
 habits/service.py        67      0   100%
-streaks/service.py       51      0   100%
+streaks/service.py       98      0   100%
 ------------------------------------------
-TOTAL                   146      0   100%
+TOTAL                   195      0   100%
+
+71 passed
 ```
 
 The 70% threshold (§4) is met. Routes and templates are not unit-tested — they are checked manually in the browser.

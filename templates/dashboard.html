@@ -1,110 +1,131 @@
 {% extends "base.html" %}
 {% block title %}Dashboard · Habit Buddy{% endblock %}
+{% block main_class %}wide{% endblock %}
 
 {% block head %}
+<script src="{{ url_for('static', filename='buddy-cat.js') }}" defer></script>
 <style>
-  /* ---------- today card with progress ring ---------- */
-  .today { display: flex; align-items: center; gap: 16px; }
-  .ring { width: 72px; height: 72px; flex: none; transform: rotate(-90deg); }
-  .ring circle { fill: none; stroke-width: 7; }
+  /* ---------- the cat and today's summary ---------- */
+  /* buddy-cat.js reads these colours for its floor line, "!", "z z Z" and confetti */
+  buddy-cat { display: block; width: 100%;
+              --color-divider: var(--line); --color-accent: var(--accent); --color-accent-300: #8aa3c0;
+              --color-accent-700: #d4e0ec; --color-neutral-600: var(--muted); --color-neutral-700: #e2d8b0;
+              --font-heading: "Figtree", system-ui, sans-serif; }
+  .cat-line { margin: 4px 0 16px; font-size: 1.05rem; }
+  .today { display: flex; align-items: center; gap: 16px; padding: 14px 0; margin-bottom: 20px;
+           border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .ring { position: relative; width: 64px; height: 64px; flex: none; }
+  .ring svg { transform: rotate(-90deg); display: block; }
+  .ring circle { fill: none; stroke-width: 3; }
   .ring .track { stroke: var(--line); }
-  .ring .fill { stroke: var(--good); stroke-linecap: round; transition: stroke-dashoffset .6s ease; }
-  .today .big { font-size: 1.6rem; font-weight: 700; line-height: 1.1; }
+  .ring .fill { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset .6s ease; }
+  .ring span { position: absolute; inset: 0; display: grid; place-items: center;
+               font-weight: 600; font-size: .95rem; font-variant-numeric: tabular-nums; }
+  .today .big { font-size: 1.9rem; line-height: 1.05; font-variant-numeric: tabular-nums; }
 
   /* ---------- habit cards ---------- */
-  .habits { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-  .habit {
-    display: flex; align-items: center; gap: 12px; padding: 12px;
-    border: 1px solid var(--line); border-radius: 12px; background: var(--card);
-    transition: border-color .2s, background .2s, transform .15s;
-  }
-  .habit:hover { transform: translateY(-1px); border-color: var(--accent); }
-  .habit.done { border-color: var(--good); background: color-mix(in srgb, var(--good) 8%, var(--card)); }
+  .habits { list-style: none; margin: 0 0 20px; padding: 0; display: grid; gap: 10px; }
+  .habit { display: flex; align-items: center; gap: 10px; padding: 10px 6px 10px 10px;
+           border: 1px solid var(--line); border-radius: 8px; transition: border-color .2s, background .2s; }
+  .habit.done { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
   .habit.rest { opacity: .55; }
   .habit .info { flex: 1; min-width: 0; }
-  .habit .name { font-weight: 600; overflow-wrap: anywhere; }
-  .tag { font-size: .72rem; padding: 1px 8px; border-radius: 99px; margin-left: 4px;
-         border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+  .habit .name { font-weight: 600; font-size: 1.1rem; overflow-wrap: anywhere; }
+  .habit .muted { font-size: .85rem; }
+  .back { display: inline-block; margin-bottom: 12px; font-size: .9rem; text-decoration: none;
+          padding: 4px 10px; border: 1px solid var(--accent); border-radius: 4px; }
+  .back:hover { background: var(--accent-soft); }
+  .groups li > a { color: var(--text); }
+  .tag { text-decoration: none; display: inline-block; font-size: .72rem; font-weight: 500; padding: 1px 8px; border-radius: 4px;
+         margin-left: 4px; background: var(--text); color: var(--ink); vertical-align: middle; }
 
   /* the streak flame: grey until today is done, then orange and flickering */
-  .streak { display: flex; flex-direction: column; align-items: center; width: 44px; flex: none; }
-  .flame { width: 30px; height: 30px; fill: var(--line); transition: fill .3s; }
+  .streak { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 34px; flex: none; }
+  .flame { width: 24px; height: 24px; fill: var(--flame-off); }
   .habit.done .flame { fill: url(#flameColor); transform-origin: 50% 90%;
                        animation: flicker 1.8s ease-in-out infinite; }
-  .streak b { font-size: .95rem; line-height: 1; color: var(--muted); }
-  .habit.done .streak b { color: var(--accent); }
+  .streak b { font-weight: 600; color: var(--flame-off); font-variant-numeric: tabular-nums; }
+  .habit.done .streak b { color: var(--flame-num); }
   @keyframes flicker {
     0%, 100% { transform: scale(1) rotate(0deg); }
     50%      { transform: scale(1.08, .95) rotate(-2deg); }
   }
 
-  /* dots for the daily target, e.g. 2 of 3 */
-  .pips { display: flex; gap: 4px; margin-top: 6px; }
-  .pip { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--good); transition: background .2s; }
-  .pip.on { background: var(--good); }
+  /* dots for the daily target, e.g. 1 of 2 */
+  .pips { display: flex; gap: 5px; margin-top: 6px; }
+  .pip { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--accent); }
+  .pip.on { background: var(--accent); }
 
-  /* buttons */
-  .actions { display: flex; align-items: center; gap: 4px; flex: none; }
+  /* buttons: ↩ and ✕ are quiet, ✓ is a big outlined circle */
+  .actions { display: flex; align-items: center; gap: 2px; flex: none; }
   .actions form { margin: 0; }
-  .actions button { width: 40px; height: 40px; padding: 0; border-radius: 50%;
-                    border: none; background: transparent; color: var(--muted); font-size: 1rem; }
-  .actions button:hover { background: var(--bg); color: var(--text); }
-  .actions .log { width: 48px; height: 48px; font-size: 1.3rem; color: var(--good);
-                  border: 2px solid var(--good); background: transparent; }
-  .actions .log:hover { background: var(--good); color: #fff; }
-  .habit.done .actions .log { background: var(--good); color: #fff; }
-  button:active { transform: scale(.9); }
+  .actions button, .confirm summary { width: 36px; height: 36px; padding: 0; border: none; border-radius: 50%;
+                                      color: var(--muted); display: grid; place-items: center; }
+  .actions .log { width: 46px; height: 46px; border: 1.5px solid var(--text); color: var(--text); font-size: 1.1rem; }
+  .habit.done .actions .log { border-color: var(--accent); background: var(--accent-soft); }
+
+  /* two-step archive: ✕ opens a small "Archive? Yes" box (no pop-up) */
+  .confirm { position: relative; }
+  .confirm summary { list-style: none; cursor: pointer; }
+  .confirm summary::-webkit-details-marker { display: none; }
+  .confirm summary:hover, .confirm[open] summary { background: var(--accent-soft); color: var(--text); }
+  .confirm form { position: absolute; right: 0; top: 40px; z-index: 1; white-space: nowrap;
+                  display: flex; align-items: center; gap: 8px; padding: 8px 10px; font-size: .9rem;
+                  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+                  box-shadow: 0 6px 20px rgba(0, 0, 0, .3); }
+  .confirm .yes, .actions .confirm .yes { width: auto; height: auto; padding: 6px 12px; border-radius: 6px;
+                  background: var(--accent); color: var(--ink); font-weight: 600; }
 
   /* ---------- milestones ---------- */
-  .badges { display: flex; flex-wrap: wrap; gap: 8px; }
-  .badge { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 99px;
-           background: color-mix(in srgb, var(--accent) 14%, transparent); font-size: .9rem; }
-  .badge svg { width: 16px; height: 16px; fill: url(#flameColor); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  .chip { padding: 4px 12px; border: 1px solid var(--text); border-radius: 4px; font-size: .9rem; }
 
-  /* ---------- collapsible forms ---------- */
-  details.card summary { cursor: pointer; font-weight: 600; list-style: none; }
-  details.card summary::before { content: "+ "; color: var(--accent); }
-  details.card[open] summary::before { content: "– "; }
-  details.card[open] summary { margin-bottom: 12px; }
+  /* ---------- bottom buttons and groups ---------- */
+  .bottom { display: flex; flex-wrap: wrap; gap: 10px; border-top: 1px solid var(--line); padding-top: 20px; }
+  .bottom > * { flex: 1 1 0; }
+  .groups > summary { list-style: none; cursor: pointer; text-align: center; font-weight: 600;
+                    padding: 12px 14px; border: 1px solid var(--line); border-radius: 6px; }
+  .groups > summary::-webkit-details-marker { display: none; }
+  .groups > summary:hover { background: var(--accent-soft); }
+  .groups[open] { flex-basis: 100%; }          /* open: drops onto its own full-width line */
+  .groups ul { list-style: none; margin: 12px 0; padding: 0; }
+  .groups li { display: flex; justify-content: space-between; align-items: center; padding: 6px 0;
+               border-bottom: 1px solid var(--line); }
+  .groups li .confirm form { top: 40px; }
 
-  /* weekday pills: hidden until "Only on" is picked (pure CSS, no JavaScript) */
-  .days { display: none; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
-  form:has(input[value=custom]:checked) .days { display: flex; }
-  .days input { position: absolute; opacity: 0; }
-  .days span { display: inline-block; padding: 6px 12px; border-radius: 99px; cursor: pointer;
-               border: 1px solid var(--line); transition: background .15s, color .15s; }
-  .days input:checked + span { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .days input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .choice { display: flex; gap: 16px; margin-bottom: 8px; }
-  .choice label { margin: 0; }
-
-  /* two-step confirm: the summary is the first button, the form appears when it's open */
-  .confirm { position: relative; }
-  .confirm summary { list-style: none; cursor: pointer; color: var(--muted);
-                     display: grid; place-items: center; min-width: 40px; height: 40px;
-                     padding: 0 8px; border-radius: 99px; }
-  .confirm summary::-webkit-details-marker { display: none; }
-  .confirm summary:hover, .confirm[open] summary { background: var(--bg); color: var(--text); }
-  .confirm form { position: absolute; right: 0; top: 44px; z-index: 1; white-space: nowrap;
-                  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
-                  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
-                  box-shadow: 0 6px 20px rgba(0,0,0,.12); font-size: .9rem; }
-  .confirm .yes, .actions .confirm .yes { width: auto; height: auto; padding: 6px 12px; border-radius: 8px;
-                  background: var(--bad); color: #fff; font-size: .9rem; }
-
-  .groups { list-style: none; margin: 0 0 12px; padding: 0; }
-  .groups li { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
-  .groups form { margin: 0; }
+  /* ---------- laptop layout ----------
+     Phones get one column in reading order (greeting, cat, summary, habits,
+     milestones, buttons). From 900px wide:
+       "← All habits" (only when filtering) ... greeting   <- top row
+       the cat walks across the full width
+       summary, milestones | habit list   <- both start at the same height
+       buttons across the bottom of the page */
+  @media (min-width: 900px) {
+    .layout { display: grid; grid-template-columns: 340px 1fr; column-gap: 48px;
+              grid-template-areas: "back hello" "stage stage" "summary list" "miles list" "bottom bottom";
+              grid-template-rows: auto auto auto 1fr auto; align-items: start; }
+    .back { grid-area: back; justify-self: start; align-self: center; margin: 0; }
+    .hello { grid-area: hello; justify-self: end; align-self: center; margin: 0; }
+    .stage { grid-area: stage; }
+    .summary { grid-area: summary; margin-top: 0; }
+    .list { grid-area: list; }
+    .miles { grid-area: miles; }
+    .bottom { grid-area: bottom; margin-top: 24px; }
+    .bottom > * { flex: 0 0 220px; }              /* normal button size, not stretched */
+    .bottom > .groups[open] { flex-basis: 100%; }
+    .bottom > .groups[open] > summary { width: 220px; }
+    .habits { margin-bottom: 0; }
+    .list h2 { min-height: 34px; display: flex; align-items: center; }
+  }
 
   @media (prefers-reduced-motion: reduce) {
     .habit.done .flame { animation: none; }
-    .habit, .habit:hover, button:active { transform: none; }
   }
 </style>
 {% endblock %}
 
 {% block content %}
-{# One shared colour for every lit flame #}
+{# One shared colour and shape for every flame #}
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
     <linearGradient id="flameColor" x1="0" y1="1" x2="0" y2="0">
@@ -119,140 +140,141 @@
   </defs>
 </svg>
 
-<h1>Hi, {{ user.first_name }}</h1>
+<div class="layout">
+{% if group_filter %}<a class="back" href="{{ url_for('dashboard') }}">← All habits</a>{% endif %}
+<h1 class="hello">Hi, {{ user.first_name }}</h1>
 
-<section class="card today">
-  {% set ring = 163.4 %}  {# circumference of the circle: 2 × π × 26 #}
-  <svg class="ring" viewBox="0 0 64 64" aria-hidden="true">
-    <circle class="track" cx="32" cy="32" r="26"/>
-    <circle class="fill" cx="32" cy="32" r="26" stroke-dasharray="{{ ring }}"
-            stroke-dashoffset="{{ ring * (1 - done_count / total_count) if total_count else ring }}"/>
-  </svg>
+<div class="stage">
+{# The cat: its mood comes from cat_mode() in app.py; cat_cue plays once after a check-in #}
+<buddy-cat mode="{{ cat_mode }}" data-cue="{{ cat_cue }}" base="{{ url_for('static', filename='sprites/') }}"
+           scale="1.9" height="140" start="0.55" title="Click {{ cat_name }}"></buddy-cat>
+
+{% set left = total_count - done_count %}
+{% set logged_today = habits | selectattr("today_count") | list %}
+<p class="cat-line">
+  {% if not habits %}{{ cat_name }} is waiting for your first habit.
+  {% elif total_count == 0 %}Rest day. {{ cat_name }} is curled up asleep.
+  {% elif left == 0 %}Everything's done for today. {{ cat_name }} approves.
+  {% elif not logged_today %}{{ cat_name }} is waiting by the door. Nothing logged yet.
+  {% else %}{{ cat_name }} is keeping you company — {{ left }} still to go.{% endif %}
+</p>
+</div>
+
+{% set pct = (100 * done_count / total_count) | round | int if total_count else 0 %}
+<section class="today summary">
+  <div class="ring">
+    <svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true">
+      <circle class="track" cx="32" cy="32" r="26"/>
+      {# 163.4 is the circle's length (2 × π × 26); the offset hides the part not done yet #}
+      <circle class="fill" cx="32" cy="32" r="26" stroke-dasharray="163.4"
+              stroke-dashoffset="{{ 163.4 * (1 - pct / 100) }}"/>
+    </svg>
+    <span>{{ pct }}%</span>
+  </div>
   <div>
     <div class="muted">{{ today.strftime("%A %d %B") }}</div>
-    {% if total_count %}
-      <div class="big">{{ done_count }} / {{ total_count }}</div>
-      <div class="muted">
-        {% if done_count == total_count %}All done today. Nice!{% else %}habits done today{% endif %}
-      </div>
-    {% elif habits %}
-      <div class="big">Rest day</div><div class="muted">Nothing is due today</div>
-    {% else %}
-      <div class="big">Welcome!</div><div class="muted">Add your first habit below</div>
-    {% endif %}
+    <div class="big">{{ done_count }} / {{ total_count }}</div>
+    <div class="muted">{% if total_count and left == 0 %}All done today. Nice!{% else %}habits done today{% endif %}</div>
   </div>
 </section>
 
+<div class="list">
 {% if habits %}
-<section class="card">
+{% if group_filter %}
+  <h2>{{ group_filter }} · {{ shown | length }} habit{{ "s" if shown | length != 1 }}</h2>
+  {% if not shown %}<p class="muted">No habits in this group yet. Pick it when you add a new habit.</p>{% endif %}
+{% else %}
   <h2>Your habits</h2>
-  <ul class="habits">
-    {% for h in habits %}
-    <li class="habit{% if h.done %} done{% endif %}{% if not h.due_today %} rest{% endif %}">
-      <div class="streak" title="Current streak: {{ h.streak }} (best {{ h.best }})">
-        <svg class="flame" aria-hidden="true"><use href="#flame"/></svg>
-        <b>{{ h.streak }}</b>
+{% endif %}
+<ul class="habits">
+  {% for h in shown %}
+  <li class="habit{% if h.done %} done{% endif %}{% if not h.due_today %} rest{% endif %}">
+    <div class="streak" title="Current streak {{ h.streak }} · best {{ h.best }}">
+      <svg class="flame" aria-hidden="true"><use href="#flame"/></svg>
+      <b>{{ h.streak }}</b>
+    </div>
+    <div class="info">
+      <div class="name">
+        {{ h.name }}
+        {% if h.group_name %}<a class="tag" href="{{ url_for('dashboard', group=h.group_id) }}" title="Show only {{ h.group_name }}">{{ h.group_name }}</a>{% endif %}
       </div>
-      <div class="info">
-        <div class="name">
-          {{ h.name }}
-          {% if h.group_name %}<span class="tag">{{ h.group_name }}</span>{% endif %}
+      <div class="muted">
+        {% if h.due_today %}{{ h.days }}{% else %}Rest day today{% endif %}
+        · best {{ h.best }} · {{ h.rate }}% last 30 days
+      </div>
+      {% if h.target > 1 and h.due_today %}
+        <div class="pips" aria-label="{{ h.today_count }} of {{ h.target }} today">
+          {% for i in range(h.target) %}<span class="pip{% if i < h.today_count %} on{% endif %}"></span>{% endfor %}
         </div>
-        <div class="muted">
-          {% if h.due_today %}{{ h.days }}{% else %}Rest day today{% endif %}
-          · best {{ h.best }} · {{ h.rate }}% last 30 days
-        </div>
-        {% if h.target > 1 %}
-          <div class="pips" aria-label="{{ h.today_count }} of {{ h.target }} today">
-            {% for i in range(h.target) %}<span class="pip{% if i < h.today_count %} on{% endif %}"></span>{% endfor %}
-          </div>
-        {% endif %}
-      </div>
-      <div class="actions">
-        <form method="post" action="{{ url_for('habit_undo', habit_id=h.id) }}">
-          <button title="Undo one" aria-label="Undo one {{ h.name }}">↩</button>
+      {% endif %}
+    </div>
+    <div class="actions">
+      {% if h.due_today %}{# rest days can't be logged, only archived #}
+      <form method="post" action="{{ url_for('habit_undo', habit_id=h.id) }}">
+        <button title="Undo one" aria-label="Undo one {{ h.name }}">↩</button>
+      </form>
+      <form method="post" action="{{ url_for('habit_checkin', habit_id=h.id) }}">
+        <button class="log" title="Log it" aria-label="Log {{ h.name }}">✓</button>
+      </form>
+      {% endif %}
+      <details class="confirm">
+        <summary title="Archive" aria-label="Archive {{ h.name }}">✕</summary>
+        <form method="post" action="{{ url_for('habit_archive', habit_id=h.id) }}">
+          <span>Archive?</span>
+          <button class="yes">Yes</button>
         </form>
-        <form method="post" action="{{ url_for('habit_checkin', habit_id=h.id) }}">
-          <button class="log" title="Log it" aria-label="Log {{ h.name }}">✓</button>
-        </form>
-        {# Two steps instead of a pop-up: ✕ opens "Archive?", then Yes sends the form #}
-        <details class="confirm">
-          <summary title="Archive" aria-label="Archive {{ h.name }}">✕</summary>
-          <form method="post" action="{{ url_for('habit_archive', habit_id=h.id) }}">
-            <span>Archive?</span>
-            <button class="yes">Yes</button>
-          </form>
-        </details>
-      </div>
-    </li>
-    {% endfor %}
-  </ul>
-</section>
+      </details>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+</div>
+
+{% if milestones %}
+<div class="miles">
+<h2>Milestones</h2>
+<div class="chips">
+  {% for m in milestones %}
+    <span class="chip" title="Earned {{ m.date }}">{{ m.days }} days · {{ m.habit }}</span>
+  {% endfor %}
+</div>
+</div>
 {% endif %}
 
-<section class="card">
-  <h2>Milestones</h2>
-  {% if milestones %}
-    <div class="badges">
-      {% for m in milestones %}
-        <span class="badge" title="Earned {{ m.date }}">
-          <svg aria-hidden="true"><use href="#flame"/></svg>
-          {{ m.days }} days · <strong>{{ m.habit }}</strong>
-        </span>
+<div class="bottom">
+  <a class="btn-primary" href="{{ url_for('habit_new') }}">+ New habit</a>
+  <details class="groups">
+    <summary>Groups</summary>
+    {% if groups %}
+    <ul>
+      {% for grp in groups %}
+        <li>
+          <a href="{{ url_for('dashboard', group=grp.id) }}">{{ grp.name }}</a>
+          <details class="confirm">
+            <summary aria-label="Delete group {{ grp.name }}">✕</summary>
+            <form method="post" action="{{ url_for('group_delete', group_id=grp.id) }}">
+              <span>Habits stay, just ungrouped.</span>
+              <button class="yes">Delete</button>
+            </form>
+          </details>
+        </li>
       {% endfor %}
-    </div>
-  {% else %}
-    <div class="muted">Keep a streak going for 7 days to earn your first one.</div>
-  {% endif %}
-</section>
+    </ul>
+    {% endif %}
+    <form method="post" action="{{ url_for('group_create') }}" class="row">
+      <input type="text" name="name" maxlength="40" placeholder="e.g. Morning" required aria-label="Group name">
+      <button type="submit" style="flex: 0 0 auto">Add group</button>
+    </form>
+  </details>
+</div>
+</div>{# .layout #}
 
-<details class="card" {% if not habits %}open{% endif %}>
-  <summary>New habit</summary>
-  <form method="post" action="{{ url_for('habit_create') }}">
-    <label>Name <input type="text" name="name" maxlength="80" placeholder="Read" required></label>
-    <div class="row">
-      <label>Times per day <input type="number" name="target" min="1" max="10" value="1" required></label>
-      <label>Group
-        <select name="group_id">
-          <option value="">No group</option>
-          {% for grp in groups %}<option value="{{ grp.id }}">{{ grp.name }}</option>{% endfor %}
-        </select>
-      </label>
-    </div>
-    <div class="choice">
-      <label><input type="radio" name="frequency" value="daily" checked> Every day</label>
-      <label><input type="radio" name="frequency" value="custom"> Only on…</label>
-    </div>
-    <div class="days">
-      {% for i, name in weekdays %}
-        <label><input type="checkbox" name="weekdays" value="{{ i }}"><span>{{ name }}</span></label>
-      {% endfor %}
-    </div>
-    <button type="submit" class="primary">Add habit</button>
-  </form>
-</details>
-
-<details class="card">
-  <summary>Groups</summary>
-  {% if groups %}
-  <ul class="groups">
-    {% for grp in groups %}
-      <li>
-        {{ grp.name }}
-        <details class="confirm">
-          <summary aria-label="Delete group {{ grp.name }}">Delete</summary>
-          <form method="post" action="{{ url_for('group_delete', group_id=grp.id) }}">
-            <span>Habits stay, just ungrouped.</span>
-            <button class="yes">Yes, delete</button>
-          </form>
-        </details>
-      </li>
-    {% endfor %}
-  </ul>
-  {% endif %}
-  <form method="post" action="{{ url_for('group_create') }}" class="row">
-    <input type="text" name="name" maxlength="40" placeholder="e.g. Morning" required aria-label="Group name">
-    <button type="submit" style="flex: 0 0 auto">Add group</button>
-  </form>
-</details>
+<script>
+  // Play the one-off cue (celebrate / jump) after the cat has started moving.
+  window.addEventListener("load", function () {
+    var cat = document.querySelector("buddy-cat");
+    if (cat && cat.dataset.cue) cat.setAttribute("cue", cat.dataset.cue + ":1");
+  });
+</script>
 {% endblock %}

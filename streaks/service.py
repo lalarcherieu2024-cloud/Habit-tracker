@@ -2,7 +2,7 @@
 Domain B — Streaks & Insights.
 
 Computes current streak, longest streak, and completion rate
-from check-in history.  Persists milestone events (7/14/30-day)
+from check-in history.  Persists milestone events (7/14/30/60/100/365-day)
 to the milestones table.
 
 Handles daily habits (every day counts) and custom habits (only certain weekdays count)
@@ -24,7 +24,7 @@ MILESTONE_DAYS = (7, 14, 30, 60, 100, 365)
 _WEEKDAY_BIT = {i: (1 << i) for i in range(7)}
 
 
-def _is_scheduled(day, frequency, weekdays_mask):
+def is_scheduled(day, frequency, weekdays_mask):
     """True if this calendar day is one the habit is supposed to be done on."""
     if frequency == "daily" or not weekdays_mask:
         return True
@@ -49,13 +49,13 @@ def current_streak(checkins, target=1, frequency="daily", weekdays_mask=None, as
 
     # Grace period: if as_of is scheduled but not done, start from yesterday
     check = as_of
-    if _is_scheduled(check, frequency, weekdays_mask) and check not in day_set:
+    if is_scheduled(check, frequency, weekdays_mask) and check not in day_set:
         check -= timedelta(days=1)
 
     streak = 0
     while True:
         # Skip non-scheduled days (rest days aren't gaps)
-        if not _is_scheduled(check, frequency, weekdays_mask):
+        if not is_scheduled(check, frequency, weekdays_mask):
             check -= timedelta(days=1)
             continue
         if check in day_set:
@@ -79,7 +79,7 @@ def longest_streak(checkins, target=1, frequency="daily", weekdays_mask=None):
         gap_has_scheduled = False
         d = days[i - 1] + timedelta(days=1)
         while d < days[i]:
-            if _is_scheduled(d, frequency, weekdays_mask):
+            if is_scheduled(d, frequency, weekdays_mask):
                 gap_has_scheduled = True
                 break
             d += timedelta(days=1)
@@ -114,7 +114,7 @@ def completion_rate(checkins, target=1, frequency="daily", weekdays_mask=None,
     scheduled = hit = 0
     d = start
     while d <= as_of:
-        if _is_scheduled(d, frequency, weekdays_mask):
+        if is_scheduled(d, frequency, weekdays_mask):
             scheduled += 1
             if d in done:
                 hit += 1

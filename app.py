@@ -9,7 +9,7 @@ Habit Buddy — main Flask application.
 """
 
 import os
-from datetime import date
+from datetime import date, datetime
 from functools import wraps
 
 from flask import (
@@ -33,9 +33,11 @@ os.makedirs(DATA_DIR, exist_ok=True)   # SQLite can't create missing folders
 DB_PATH = os.path.join(DATA_DIR, "habits.db")
 
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+CAT_NAME = "Chabal"   # the pixel cat that keeps you company on the dashboard
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
+app.jinja_env.globals["cat_name"] = CAT_NAME
 
 
 def get_db():
@@ -157,6 +159,19 @@ def habit_stats(db, habit, today):
     }
 
 
+def cat_mode(done_count, due_count, hour):
+    """How the cat behaves on the dashboard, from today's progress."""
+    if due_count == 0:
+        return "sleep"      # rest day: curled up asleep
+    if done_count == due_count:
+        return "auto"       # all done: wanders around happily
+    if hour >= 18:
+        return "alert"      # evening with habits left: sits up tall with a "!"
+    if done_count == 0:
+        return "front"      # nothing logged yet: sits facing you
+    return "auto"
+
+
 @app.route("/dashboard")
 @login_required
 def dashboard():
@@ -174,6 +189,14 @@ def dashboard():
     due = [h for h in habit_data if h["due_today"]]
     done_count = sum(1 for h in due if h["done"])
 
+    # ?group=<id> shows only that group's habits in the list (the summary above still
+    # counts all of them). Only the user's own groups are in group_names, so another
+    # user's group id is simply ignored.
+    group_id = request.args.get("group", type=int)
+    if group_id not in group_names:
+        group_id = None
+    shown = [h for h in habit_data if group_id is None or h["group_id"] == group_id]
+
     # Milestones with the habit's name, newest first
     habit_names = {h["id"]: h["name"] for h in habit_data}
     milestones = [
@@ -186,13 +209,23 @@ def dashboard():
         "dashboard.html",
         user=user,
         habits=habit_data,
+        shown=shown,
         groups=groups,
+        group_filter=group_names.get(group_id),
         milestones=milestones,
         done_count=done_count,
         total_count=len(due),
         today=today,
-        weekdays=list(enumerate(WEEKDAYS)),
+        cat_mode=cat_mode(done_count, len(due), datetime.now().hour),
+        cat_cue=session.pop("cat_cue", ""),   # set by habit_checkin, played once
     )
+
+
+@app.route("/habits/new")
+@login_required
+def habit_new():
+    groups = list_groups(get_db(), g.user["id"])
+    return render_template("new_habit.html", groups=groups, weekdays=list(enumerate(WEEKDAYS)))
 
 
 @app.route("/habits/create", methods=["POST"])
@@ -202,7 +235,7 @@ def habit_create():
     name = request.form.get("name", "").strip()
     if not name:
         flash("Habit name is required", "error")
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("habit_new"))
 
     group_id = request.form.get("group_id", "")
     group_id = int(group_id) if group_id.isdigit() else None
@@ -214,7 +247,7 @@ def habit_create():
     frequency = request.form.get("frequency", "daily")
     mask = None
     if frequency == "custom":
-        days = {int(d) for d in request.form.getlist("weekdays") if d in "0123456"}
+        days = {int(d) for d in request.form.getlist("weekdays") if d.isdigit() and int(d) < 7}
         mask = sum(1 << d for d in days)
 
     try:
@@ -222,6 +255,7 @@ def habit_create():
                      target_count_per_day=target, group_id=group_id)
     except ValueError as e:
         flash(str(e), "error")
+        return redirect(url_for("habit_new"))
     return redirect(url_for("dashboard"))
 
 
@@ -241,6 +275,9 @@ def habit_checkin(habit_id):
     # Only on the log that completes the day, and not on rest days (they don't count for streaks)
     if stats["due_today"] and stats["today_count"] == stats["target"]:
         flash(f"{habit['name']} done for today! Streak: {stats['streak']}", "success")
+        session["cat_cue"] = "celebrate"
+    else:
+        session["cat_cue"] = "jump"
     for days in check_and_award_milestones(db, habit_id, stats["streak"]):
         flash(f"Milestone! {days}-day streak on {habit['name']}", "success")
     return redirect(url_for("dashboard"))

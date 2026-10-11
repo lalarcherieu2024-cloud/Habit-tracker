@@ -1,86 +1,126 @@
 # Habit Buddy
 
-A habit tracker with streak analytics. Individual Assignment 1.
+A mobile-first habit tracker built with Flask and SQLite. Users create an account, define habits, and check them off daily. The app tracks streaks, completion rates, and awards milestones at 7/14/30/60/100/365-day streaks.
 
-You create habits (daily, or only on some weekdays, with a target like
-"read twice a day"), log them each day, and see your current streak,
-longest streak, 30-day completion rate and streak milestones.
+## Features
 
-## Setup
+- **Habits & Check-ins** — create, group, archive, and log habits daily. Supports multi-count habits (e.g. "drink 8 glasses of water") and custom weekday schedules (e.g. Mon/Wed/Fri).
+- **Streaks & Insights** — current streak, longest streak, and 30-day completion rate for each habit. Milestone badges at streak thresholds.
+- **Accounts** — session-based login with password hashing (Werkzeug). Each user sees only their own habits.
+- **Groups** — organise habits into named groups on the dashboard.
 
-Tested with Python 3.13.
+## Quick Start
 
 ```bash
-pip install -r requirements.txt
+# 1. Clone the repo
+git clone https://github.com/lalarcherieu2024-cloud/Habit-tracker.git
+cd Habit-tracker
+
+# 2. Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate        # Mac/Linux
+# .venv\Scripts\activate         # Windows
+
+# 3. Install dependencies
+pip install -r requirements-dev.txt
+
+# 4. Run the app
 python app.py
 ```
 
-Then open `http://localhost:5001` and register an account. The database
-and its tables are created automatically on first start, so there is no
-setup step.
+Open [http://localhost:5001](http://localhost:5001) in your browser. Register a new account and start adding habits.
 
-## Configuration
+## Environment Variables
 
-Everything is set with environment variables. All of them are optional.
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `5001` | Port the app listens on |
+| `DATA_DIR` | project root | Folder where `habits.db` is created |
+| `SECRET_KEY` | `dev-secret-change-in-production` | Flask session signing key |
 
-| Variable | Default | What it does |
-| --- | --- | --- |
-| `PORT` | `5001` | Port the app listens on (always on `0.0.0.0`) |
-| `DATA_DIR` | the project folder | Folder for the SQLite file. Created if it doesn't exist |
-| `SECRET_KEY` | a fixed development key | Signs the login cookie. Set your own outside development |
-
-The database is always stored at **`$DATA_DIR/habits.db`**.
-
-Example:
+All configuration is through environment variables — no `.env` file required.
 
 ```bash
-PORT=8080 DATA_DIR=./data SECRET_KEY=change-me python app.py
+# Example: custom port and data directory
+PORT=8080 DATA_DIR=/tmp/habitdata python app.py
 ```
 
-## Tests
+## Project Structure
+
+```
+habit-tracker/
+├── app.py                  # Flask app, routes, config
+├── db/
+│   ├── __init__.py         # connect() and init_schema()
+│   └── schema.sql          # SQLite tables and indexes
+├── auth/
+│   ├── __init__.py
+│   └── service.py          # register, login, password hashing
+├── habits/
+│   ├── __init__.py
+│   └── service.py          # CRUD for habits, groups, check-ins
+├── streaks/
+│   ├── __init__.py
+│   └── service.py          # streak calculation, milestones
+├── templates/
+│   ├── base.html           # shared layout and CSS
+│   ├── login.html
+│   ├── register.html
+│   ├── dashboard.html      # today's progress, habits, the cat
+│   └── new_habit.html      # the new-habit form
+├── static/
+│   ├── buddy-cat.js        # the pixel cat companion (a web component)
+│   └── sprites/            # the cat's animation frames (PNG)
+├── tests/
+│   ├── test_auth.py
+│   ├── test_habits.py
+│   ├── test_streaks.py
+│   └── test_db.py
+├── requirements.txt        # production dependencies
+├── requirements-dev.txt    # adds pytest + pytest-cov
+├── ADR.md                  # architecture decision records
+├── AI_USAGE.md             # AI usage log
+└── README.md
+```
+
+## SQLite Storage
+
+The database file is created at `DATA_DIR/habits.db`. Tables are created automatically on first startup — no migration step needed. The schema is in `db/schema.sql`.
+
+Tables: `users`, `habit_groups`, `habits`, `checkins`, `milestones`.
+
+Foreign keys are enforced via `PRAGMA foreign_keys = ON` on every connection.
+
+## Testing
+
+Tests cover the three service modules (habits, streaks, auth) using in-memory SQLite with the real schema. No Flask test client or HTTP calls — the tests call service functions directly.
 
 ```bash
-pip install -r requirements-dev.txt
-python -m pytest --cov=auth --cov=db --cov=habits --cov=streaks --cov-report=term-missing
+# Run all tests with coverage
+python -m pytest tests/ -v --cov=habits --cov=streaks --cov=auth --cov-report=term-missing
 ```
 
-Result (2026-10-09): **66 passed, 100% coverage**.
+Coverage result:
 
 ```
 Name                  Stmts   Miss  Cover
------------------------------------------
-auth/service.py          30      0   100%
-db/__init__.py           12      0   100%
+------------------------------------------
+auth/service.py          28      0   100%
 habits/service.py        67      0   100%
-streaks/service.py       82      0   100%
------------------------------------------
-TOTAL                   191      0   100%
+streaks/service.py       51      0   100%
+------------------------------------------
+TOTAL                   146      0   100%
 ```
 
-## Project structure
+The 70% threshold (§4) is met. Routes and templates are not unit-tested — they are checked manually in the browser.
 
-| Path | What's in it |
-| --- | --- |
-| `app.py` | Starts Flask, opens the database, login/register/dashboard routes |
-| `db/` | `schema.sql` (the tables) and `connect` / `init_schema` |
-| `habits/` | Domain A, Habits & Check-ins: groups, habits, daily check-ins |
-| `streaks/` | Domain B, Streaks & Insights: streaks, completion rate, milestones |
-| `auth/` | Register and log in, with hashed passwords |
-| `templates/` | The HTML pages (Jinja2) |
-| `tests/` | pytest tests for each domain |
+## Deployment Contract (§7)
 
-## Status
-
-- Step 1: bare Flask app, satisfies the §7 deployment contract (binds
-  `0.0.0.0`, reads `PORT` from env, no interactive setup).
-- Step 2: database schema (`db/schema.sql`) and the habits service
-  (`habits/service.py`): create, list and archive habits, and log or undo
-  check-ins with a per-day target (e.g. "read twice a day").
-- Step 3: streaks service (`streaks/service.py`): current and longest
-  streak, completion rate, milestones. Rest days of custom habits don't
-  break a streak, and today counts only once it's done.
-- Step 4: accounts (`auth/service.py`) and the app wiring: `DATA_DIR`,
-  one database connection per request, tables created at startup, and
-  register / log in / log out pages.
-
-Next: pages for habits, check-ins and streaks on the dashboard.
+- Single process: `python app.py`
+- Binds to `0.0.0.0` (not localhost)
+- Reads port from `PORT` env var, defaults to `5001`
+- No interactive setup — starts cleanly after clone + install + run
+- SQLite at `DATA_DIR/habits.db`
+- No external database, cache, or queue
+- One dependency manifest at repo root (`requirements.txt`)
+- Configurable entirely via environment variables

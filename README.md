@@ -35,8 +35,8 @@ Open [http://localhost:5001](http://localhost:5001) in your browser. Register a 
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | `5001` | Port the app listens on |
-| `DATA_DIR` | project root | Folder where `habits.db` is created (the folder is created if it doesn't exist) |
+| `PORT` | `5001` (`8000` in the Docker image) | Port the app listens on |
+| `DATA_DIR` | project root (`/data` in the Docker image) | Folder where `habits.db` is created (the folder is created if it doesn't exist) |
 | `SECRET_KEY` | `dev-secret-change-in-production` | Flask session signing key |
 
 All configuration is through environment variables — no `.env` file required.
@@ -79,6 +79,7 @@ habit-tracker/
 │   ├── test_db.py
 │   └── conftest.py         # shared in-memory database fixture
 ├── requirements.txt        # the one dependency manifest: Flask, plus pytest and pytest-cov for the tests
+├── Dockerfile              # the course's container template, with its four TODOs filled in
 ├── ADR.md                  # architecture decision records
 ├── AI_USAGE.md             # AI usage log
 └── README.md
@@ -127,3 +128,45 @@ The 70% threshold (§4) is met. Routes and templates are not unit-tested — the
 - No external database, cache, or queue
 - Exactly one dependency manifest at the repo root (`requirements.txt`)
 - Configurable entirely via environment variables
+- No seed data: the app is useful with an empty database, so nothing is loaded on boot and a restart never changes row counts
+
+### Docker
+
+`Dockerfile` is the course template with its four `TODO`s filled in: `python:3.12-slim`, `pip install -r requirements.txt`, an explicit `COPY` of `app.py`, `db/`, `auth/`, `habits/`, `streaks/`, `templates/` and `static/` (no tests, `.venv` or local database), and `CMD ["python", "app.py"]`.
+
+```bash
+docker build -t habit-buddy .
+docker run -p 8000:8000 -v habit-buddy-data:/data habit-buddy
+```
+
+### Contract check (`container/run.sh`)
+
+Output of the course checker, run on 2026-10-12 with `PORT=8100 ./container/run.sh /path/to/habit-tracker` (port 8000 was busy on my machine with another app):
+
+```
+=== SDD Assignment 1 contract check ===
+Repository: /Users/lunalarcher/habit-tracker
+
+==> Repository shape
+  PASS  one Dockerfile, one manifest (requirements.txt)
+
+==> Build from a clean context, no build args
+  PASS  image built
+  PASS  image size 50 MB
+
+==> Start on PORT=8100 and reach it from the host
+  PASS  HTTP 302 from http://localhost:8100/
+
+==> SQLite file under DATA_DIR
+  PASS  found in /data: habits.db 
+
+==> Data persists, and a second boot does not re-seed
+  PASS  volume at /data persists
+  PASS  row counts unchanged across restart: checkins=0 habit_groups=0 habits=0 milestones=0 users=0 
+
+==> PORT override is honoured (not hardcoded)
+  PASS  HTTP 302 from http://localhost:9123/
+
+=== ALL CHECKS PASSED ===
+Paste this output into your README as the §7 evidence.
+```

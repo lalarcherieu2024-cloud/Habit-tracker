@@ -18,6 +18,9 @@
       color-scheme: dark;
     }
     * { box-sizing: border-box; }
+    /* Clicking a tab or button loads a new page: fade between the two pages instead of
+       flashing (supported by recent Chrome, Edge and Safari; others just ignore it) */
+    @view-transition { navigation: auto; }
     body { margin: 0; background: var(--bg); color: var(--text);
            font: 16px/1.5 "Figtree", system-ui, sans-serif; }
     nav { display: flex; align-items: center; gap: 16px; padding: 14px 20px;

@@ -333,6 +333,22 @@
 </div>
 
 <script>
+  // Every tab and button reloads the page, which would make the cat jump back to its
+  // starting spot. Save where it is just before the page goes away, and start it there
+  // on the next page. sessionStorage is per browser tab and is cleared when it closes.
+  (function () {
+    var cat = document.querySelector("buddy-cat");
+    try {
+      var saved = sessionStorage.getItem("catX");
+      if (saved) cat.setAttribute("start", saved);   // read by buddy-cat.js when it starts
+    } catch (e) {}
+    window.addEventListener("pagehide", function () {
+      if (!cat.c || !cat.clientWidth) return;        // cat.c.x = its position in pixels
+      var centre = (cat.c.x + cat.cw() / 2) / cat.clientWidth;
+      try { sessionStorage.setItem("catX", centre.toFixed(3)); } catch (e) {}
+    });
+  })();
+
   // Play the one-off cue (celebrate / jump) after the cat has started moving.
   window.addEventListener("load", function () {
     var cat = document.querySelector("buddy-cat");

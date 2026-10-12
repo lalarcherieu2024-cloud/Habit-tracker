@@ -118,7 +118,7 @@
     {% block content %}{% endblock %}
   </main>
   {% if not session.user_id %}
-    {# The dashboard and new-habit pages have their own cat; logged-out pages get one here #}
+    {# The dashboard has its own cat; logged-out pages (login, register) get one here #}
     <script src="{{ url_for('static', filename='buddy-cat.js') }}" defer></script>
     <buddy-cat class="roam" mode="auto" base="{{ url_for('static', filename='sprites/') }}"
                scale="2.6" height="190" start="0.2" title="Click to call {{ cat_name }}"></buddy-cat>

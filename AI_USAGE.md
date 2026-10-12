@@ -12,26 +12,28 @@
 | 2026-10-11 / committed | Sprite Cook | Uploaded a photo of my cat Chabal and generated a pixel-art cat with animation frames (sitting, walking, running, jumping, grooming, sleeping, stretching, waving). | Modified | I kept only the 45 frames the companion actually uses and saved them as PNGs in `static/sprites/`, named by pose (`walk_0.png` … `walk_7.png`, `sit_front.png`, `ball.png`, etc.). | Each pose is a separate PNG. `buddy-cat.js` swaps the image quickly to animate the cat, and the `_blink` versions make it blink while sitting. |
 | 2026-10-11 / committed | Claude Design | Asked for UI mockups of Habit Buddy using my data model (habits with a daily target, every day or chosen weekdays, groups, streaks, 30-day rate, milestones) with my cat as the companion, in a colour palette I picked (Sceptre Red, Transparent Yellow, Cerulean Blue). First a mobile version, then a laptop web version with group tabs. | Modified | I used the mockups as the design to build, not as code. The mockup pages run in Claude Design's own preview, so I rebuilt the layout as Flask/Jinja templates with plain forms. Only `buddy-cat.js` was copied over unchanged. | The mockup decided the layout: a greeting card with today's percentage and the cat, habit cards grouped by group, a “This week” grid, milestones on the side, and a new-habit form with group pills and day pills. |
 | 2026-10-11 / committed | Claude Code | Asked Claude to add the Claude Design mockups to the app without changing files that didn't need it and keeping it clean, then several layout changes (laptop size, cat walking across the whole width, buttons at the bottom, “← All habits” top left), notifications that disappear after a while, a bigger cat roaming the login page, clicking a group to see only its habits, and finally the full web design. | Modified | Claude found that my pushed `app.py` imported `is_scheduled` while the pushed `streaks/service.py` still called it `_is_scheduled`, so the GitHub version could not start. It also fixed the cat saying “Nothing logged yet” after one of two logs, and an empty weekday value crashing the form. I asked for plain forms instead of the mockup's JavaScript so I can explain every part. | The dashboard reads `?group=` and `?show=` from the URL and builds one section per group. Each button is a form, and `back_to_dashboard()` keeps the same view. “Move to” uses `set_habit_group()`. The “This week” grid comes from `week_states()`, which turns the `{date: count}` data into labels like `done`, `missed`, `rest`, and `today`. Notifications fade out with CSS, not JavaScript. |
+| 2026-10-11 / committed | Claude Code | Asked Claude to make sure everything made sense (code, README, ADR and this log) before starting the report, and to test it the way the grader would. | Accepted | Claude cloned my repo from GitHub into a fresh folder, installed `requirements.txt` with the Mac's built-in Python 3.9 and ran the app and the tests. The app started, but 8 tests failed: signing up crashed because Werkzeug's default password method, `scrypt`, does not exist on that Python. `register_user` now uses `pbkdf2:sha256`. It also fixed claims in `ADR.md` that no longer matched the code (ADR 2, 4 and 5), put the ADR labels in the brief's exact format, removed the duplicated “What I learned” section from `ADR.md`, and updated the README's coverage numbers (195 statements, 71 tests). | `generate_password_hash(password, method="pbkdf2:sha256")` turns the password into a hash string that starts with the method name, e.g. `pbkdf2:sha256:...`. `check_password_hash` reads that name from the stored hash, so login still works for accounts made earlier with `scrypt` (on a Python that has it). A fresh clone matters because it is what the deployment script does: it only has what is in the repo, not my local venv or database. |
+| 2026-10-12 / committed | Claude Code | Reported that clicking the All / To do / Done tabs and the group tabs “glitches”, then asked for exactly one dependency manifest as the deployment contract requires. | Accepted | Claude reproduced the glitch: every tab is a link that reloads the page, so the cat jumped back to its starting spot and the browser flashed between pages. It added a few lines that save the cat's position just before the page goes away and start it there on the next page, plus one CSS line that fades between pages. For the manifest, `requirements-dev.txt` was deleted and `pytest>=8.0` and `pytest-cov>=5.0` were added to `requirements.txt`; exact versions would have broken the install on Python 3.9, so Claude checked the install and the 71 tests on both Python 3.9 and 3.13. | On `pagehide` (just before the page is replaced), the script works out where the cat is as a fraction of the stage width and saves it in `sessionStorage`, which only lasts while the browser tab is open. When the next page loads, it puts that number in the cat's `start` attribute before `buddy-cat.js` starts it, so the cat carries on from the same spot. `@view-transition { navigation: auto; }` asks the browser to cross-fade from the old page to the new one; browsers that do not support it just change page normally. |
 
 # What I learned
 
-**Keeping each feature in its own folder makes it easier to split later.**  
-The `habits/`, `streaks/`, and `auth/` folders already match the services I would split into later.
+**Keeping the project split into folders made it easier to manage.**
+`habits/`, `streaks/`, and `auth/` already line up with the parts I would split later.
 
-**SQLite does not enforce foreign keys unless you turn them on.**  
-`db.connect` runs `PRAGMA foreign_keys = ON`, so the database will reject bad links instead of letting them through.
+**SQLite needs foreign keys turned on manually.**
+`db.connect` runs `PRAGMA foreign_keys = ON`, so the database actually checks the links.
 
-**Indexes do not come for free in SQLite.**  
-I had to add the indexes myself on the columns I search and join on most, or the app would get slower as the data grows.
+**Indexes in SQLite are not automatic.**
+I had to add them myself on the columns I use most, or the app would get slower as more data is added.
 
-**Schema setup should be safe to run more than once.**  
-`db.init_schema` checks `sqlite_master` first, so starting the app again does not crash or reset anything.
+**Schema setup should be safe to run more than once.**
+`db.init_schema` checks `sqlite_master` first, so restarting the app does not break anything or wipe data.
 
-**Production and dev dependencies should be separate.**  
-`requirements.txt` has the app only, and `requirements-dev.txt` adds testing tools. That keeps production smaller and cleaner.
+**I had to follow the deployment rules exactly.**
+I first kept testing tools in `requirements-dev.txt`, but the assignment only allows one requirements file at the repo root, so I moved `pytest` and `pytest-cov` into `requirements.txt`.
 
-**Tests have to match the real schema exactly.**  
-The `NOT NULL` error happened because the test users were missing required fields. The lesson is to match the fixtures to `schema.sql` exactly.
+**Tests need to match the real schema.**
+The `NOT NULL` error happened because my test users were missing required fields, so I learned to check the schema properly before writing fixtures.
 
-**Jinja templates are safer than building HTML by hand.**  
-They escape special characters automatically, so user input shows up as text instead of code.
+**Jinja is safer than writing HTML by hand.**
+It escapes special characters automatically, so user input shows as text instead of code.

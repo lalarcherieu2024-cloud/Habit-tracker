@@ -23,7 +23,7 @@ source .venv/bin/activate        # Mac/Linux
 # .venv\Scripts\activate         # Windows
 
 # 3. Install dependencies
-pip install -r requirements-dev.txt
+pip install -r requirements.txt
 
 # 4. Run the app
 python app.py
@@ -78,8 +78,7 @@ habit-tracker/
 │   ├── test_streaks.py
 │   ├── test_db.py
 │   └── conftest.py         # shared in-memory database fixture
-├── requirements.txt        # production dependencies
-├── requirements-dev.txt    # adds pytest + pytest-cov
+├── requirements.txt        # the one dependency manifest: Flask, plus pytest and pytest-cov for the tests
 ├── ADR.md                  # architecture decision records
 ├── AI_USAGE.md             # AI usage log
 └── README.md
@@ -126,5 +125,5 @@ The 70% threshold (§4) is met. Routes and templates are not unit-tested — the
 - No interactive setup — starts cleanly after clone + install + run
 - SQLite at `DATA_DIR/habits.db`
 - No external database, cache, or queue
-- One dependency manifest at repo root (`requirements.txt`)
+- Exactly one dependency manifest at the repo root (`requirements.txt`)
 - Configurable entirely via environment variables

@@ -1,0 +1,174 @@
+openapi: 3.0.3
+info:
+  title: Streaks service
+  version: 1.0.0
+  description: >
+    Computes streaks and completion rates and owns the milestones table.
+    It has no check-in data of its own: GET /streaks* calls Habits' GET /history,
+    forwarding the caller's bearer token. Milestones are evaluated lazily whenever a
+    streak is computed, so Habits never has to call Streaks.
+servers:
+  - url: http://localhost:8002
+    description: Local (docker compose)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      summary: Service health (own database only, never Habits)
+      security: []
+      responses:
+        "200":
+          description: Service can read and write its own database.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        "503":
+          description: Own database unreachable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /streaks:
+    get:
+      summary: Streaks for all of the caller's active habits
+      description: >
+        Calls Habits GET /history once, with a timeout. If Habits is down or slow the
+        response is 503 with code habits_unavailable (no stack trace, no hang).
+        Any milestone newly crossed by the computed streak is recorded and also
+        returned in new_milestones so the UI can celebrate it.
+      responses:
+        "200":
+          description: One entry per active habit.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [streaks]
+                properties:
+                  streaks:
+                    type: array
+                    items: { $ref: "#/components/schemas/HabitStreak" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/HabitsUnavailable" }
+
+  /streaks/{habit_id}:
+    parameters:
+      - name: habit_id
+        in: path
+        required: true
+        schema: { type: integer }
+    get:
+      summary: Streak for one habit
+      description: Same behaviour as GET /streaks, restricted to one habit.
+      responses:
+        "200":
+          description: The habit's streak.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HabitStreak" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: Habits reports the habit does not exist or is not the caller's.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503": { $ref: "#/components/responses/HabitsUnavailable" }
+
+  /milestones:
+    get:
+      summary: The caller's recorded milestones
+      description: >
+        Reads only this service's own database, so it keeps working when Habits is down.
+      parameters:
+        - name: habit_id
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Milestones, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [milestones]
+                properties:
+                  milestones:
+                    type: array
+                    items: { $ref: "#/components/schemas/Milestone" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        HS256 JWT issued by the Habits service (claims sub, exp), verified here with the
+        shared JWT_SECRET. The same token is forwarded to Habits on cross-seam calls.
+
+  responses:
+    Unauthorized:
+      description: Missing, invalid or expired token.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    HabitsUnavailable:
+      description: The Habits service timed out or could not be reached.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example:
+            error:
+              code: habits_unavailable
+              message: Streaks cannot be calculated right now because the Habits service is unavailable.
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: habits_unavailable }
+            message: { type: string }
+
+    Health:
+      type: object
+      required: [status, db, version]
+      properties:
+        status: { type: string, enum: [ok, error] }
+        db: { type: string, enum: [ok, error] }
+        version: { type: string, description: Git commit SHA. }
+
+    Milestone:
+      type: object
+      required: [habit_id, streak_length, achieved_on]
+      properties:
+        habit_id: { type: integer, description: Plain ID into the Habits service; no foreign key across the seam. }
+        streak_length: { type: integer, enum: [7, 14, 30, 60, 100, 365] }
+        item_unlocked: { type: string, nullable: true }
+        achieved_on: { type: string, format: date }
+
+    HabitStreak:
+      type: object
+      required: [habit_id, name, current_streak, longest_streak, completion_rate_30d, new_milestones]
+      properties:
+        habit_id: { type: integer }
+        name: { type: string }
+        current_streak: { type: integer, minimum: 0 }
+        longest_streak: { type: integer, minimum: 0 }
+        completion_rate_30d:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Completed scheduled days / scheduled days over the last 30 days.
+        new_milestones:
+          type: array
+          description: Thresholds crossed by this computation and recorded just now.
+          items: { type: integer }

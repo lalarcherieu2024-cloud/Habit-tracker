@@ -69,3 +69,18 @@ Alternatives considered:
 - **Browser push notifications** — this would still need background service worker support and extra permissions.
 
 Consequences: Everything stays in one Flask app, which fits the assignment better. The cat is just JavaScript and sprite images, and the streak logic could still be reused later if I ever build a desktop version.
+
+## 6. The Split: Two Services Along the ADR-2 Seam
+Date: 2026-11-04  
+Status: Decided
+
+**Context:** For Assignment 2 I needed the app split into two services, one for habits and one for streaks. I already had that boundary in ADR 2, so I kept the same split instead of changing everything.
+
+**Decision:** I kept the split at `checkins_by_date()`. The Habits service owns users, groups, habits, and check-ins. The Streaks service owns milestones and gets the check-in data by calling the Habits service over HTTP. The streak functions still work on a `{date: count}` dictionary, so the date math did not need to change. I also moved milestone awarding into the Streaks service, so logging a check-in does not need to call another service.
+
+**Alternatives considered:**
+- **Letting the browser talk to both services:** this would put too much logic in the frontend.
+- **Keeping milestone awarding in Habits:** this would make the services depend on each other both ways. 
+- **Making accounts a separate service:** that would add another container I do not need. Make this assignment more complex.
+
+**Consequences:** The split matches the way I already built the monolith, so it was easy to carry over. It does add a bit more setup, because the services now need HTTP calls, JWTs, and separate databases. But the streak logic stayed the same, which made the change simpler.

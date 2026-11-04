@@ -1,0 +1,458 @@
+openapi: 3.0.3
+info:
+  title: Habits service
+  version: 1.0.0
+  description: >
+    Owns users, habit groups, habits and daily check-ins. Issues JWTs at login.
+    Never calls the Streaks service: the dependency direction is Streaks -> Habits only,
+    so Habits keeps working when Streaks is down.
+servers:
+  - url: http://localhost:8001
+    description: Local (docker compose)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      summary: Service health (own database only)
+      security: []
+      responses:
+        "200":
+          description: Service can read and write its own database.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        "503":
+          description: Own database unreachable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+  /auth/signup:
+    post:
+      summary: Create an account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignupRequest" }
+      responses:
+        "201":
+          description: Account created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "409":
+          description: Username already taken.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: Validation error.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/login:
+    post:
+      summary: Exchange username and password for a JWT
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Login succeeded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "401":
+          description: Wrong username or password.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /groups:
+    get:
+      summary: List the caller's habit groups (tabs)
+      responses:
+        "200":
+          description: Groups ordered by position.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [groups]
+                properties:
+                  groups:
+                    type: array
+                    items: { $ref: "#/components/schemas/Group" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      summary: Create a group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              additionalProperties: false
+              properties:
+                name: { type: string, minLength: 1, maxLength: 60 }
+      responses:
+        "201":
+          description: Group created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /groups/{group_id}:
+    parameters:
+      - $ref: "#/components/parameters/GroupId"
+    delete:
+      summary: Delete a group. Its habits are kept and become ungrouped.
+      responses:
+        "204": { description: Group deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /habits:
+    get:
+      summary: List the caller's habits
+      parameters:
+        - name: group_id
+          in: query
+          schema: { type: integer }
+        - name: include_archived
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Habits ordered by creation date.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [habits]
+                properties:
+                  habits:
+                    type: array
+                    items: { $ref: "#/components/schemas/Habit" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      summary: Create a habit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HabitCreate" }
+      responses:
+        "201":
+          description: Habit created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Habit" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /habits/{habit_id}:
+    parameters:
+      - $ref: "#/components/parameters/HabitId"
+    get:
+      summary: Get one habit
+      responses:
+        "200":
+          description: The habit.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Habit" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      summary: Rename, move or archive a habit
+      description: >
+        Only name, group_id and archived can change. frequency, weekdays_mask and
+        target_count_per_day are fixed at creation, because changing them would
+        silently rewrite the meaning of existing check-ins and streaks. To change a
+        schedule, archive the habit and create a new one. Sending a fixed field
+        returns 422.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                name: { type: string, minLength: 1, maxLength: 100 }
+                group_id: { type: integer, nullable: true }
+                archived: { type: boolean }
+      responses:
+        "200":
+          description: Updated habit.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Habit" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /habits/{habit_id}/checkins:
+    parameters:
+      - $ref: "#/components/parameters/HabitId"
+    post:
+      summary: Log one completion (increments the day's count by 1)
+      description: >
+        Idempotent per day only in the sense that there is one row per habit per date;
+        each call adds 1 to its count. The day is complete once count reaches
+        target_count_per_day. date defaults to today and must not be in the future.
+        Check-ins are self-reported and date-only: no time-of-day is stored or checked.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                date: { type: string, format: date }
+      responses:
+        "200":
+          description: Day state after the increment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CheckinState" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      summary: Undo one completion (decrements the day's count by 1, floor 0)
+      parameters:
+        - name: date
+          in: query
+          schema: { type: string, format: date }
+          description: Defaults to today.
+      responses:
+        "200":
+          description: Day state after the decrement.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CheckinState" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /history:
+    get:
+      summary: Habit settings plus check-in history (the one endpoint that crosses the seam)
+      description: >
+        Called by the Streaks service, which forwards the caller's own bearer token.
+        Habits verifies the token and returns only that user's habits, so ownership
+        is enforced here and Streaks never needs access to users or habits data.
+        Archived habits are excluded unless include_archived is true. Days with no
+        check-in row are simply absent (equivalent to count 0).
+      parameters:
+        - name: habit_id
+          in: query
+          schema: { type: integer }
+          description: Restrict to one habit. 404 if it is not the caller's.
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+        - name: include_archived
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: History for the caller's habits.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [habits]
+                properties:
+                  habits:
+                    type: array
+                    items: { $ref: "#/components/schemas/HabitHistory" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        HS256 JWT issued by POST /auth/login, claims sub (user id) and exp.
+        Verified with the JWT_SECRET shared by both services.
+
+  parameters:
+    HabitId:
+      name: habit_id
+      in: path
+      required: true
+      schema: { type: integer }
+    GroupId:
+      name: group_id
+      in: path
+      required: true
+      schema: { type: integer }
+
+  responses:
+    Unauthorized:
+      description: Missing, invalid or expired token.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Does not exist, or belongs to another user (the two are indistinguishable by design).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ValidationError:
+      description: Invalid request body or parameters.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: not_found }
+            message: { type: string }
+
+    Health:
+      type: object
+      required: [status, db, version]
+      properties:
+        status: { type: string, enum: [ok, error] }
+        db: { type: string, enum: [ok, error] }
+        version: { type: string, description: Git commit SHA. }
+
+    SignupRequest:
+      type: object
+      required: [first_name, last_name, username, password]
+      additionalProperties: false
+      properties:
+        first_name: { type: string, minLength: 1, maxLength: 60 }
+        last_name: { type: string, minLength: 1, maxLength: 60 }
+        username: { type: string, minLength: 3, maxLength: 40 }
+        password: { type: string, minLength: 8, maxLength: 128 }
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      additionalProperties: false
+      properties:
+        username: { type: string }
+        password: { type: string }
+
+    User:
+      type: object
+      required: [id, first_name, last_name, username]
+      properties:
+        id: { type: integer }
+        first_name: { type: string }
+        last_name: { type: string }
+        username: { type: string }
+
+    LoginResponse:
+      type: object
+      required: [token, expires_in, user]
+      properties:
+        token: { type: string }
+        expires_in: { type: integer, description: Seconds until the token expires. }
+        user: { $ref: "#/components/schemas/User" }
+
+    Group:
+      type: object
+      required: [id, name, position]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        position: { type: integer }
+
+    Frequency:
+      type: string
+      enum: [daily, custom]
+
+    HabitCreate:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        group_id: { type: integer, nullable: true }
+        frequency: { $ref: "#/components/schemas/Frequency" }
+        weekdays_mask:
+          type: integer
+          minimum: 1
+          maximum: 127
+          nullable: true
+          description: Required when frequency is custom. Bit 0 = Monday ... bit 6 = Sunday.
+        target_count_per_day:
+          type: integer
+          minimum: 1
+          default: 1
+
+    Habit:
+      type: object
+      required: [id, name, group_id, frequency, weekdays_mask, target_count_per_day, archived, created_at]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        group_id: { type: integer, nullable: true }
+        frequency: { $ref: "#/components/schemas/Frequency" }
+        weekdays_mask: { type: integer, nullable: true }
+        target_count_per_day: { type: integer }
+        archived: { type: boolean }
+        created_at: { type: string, format: date }
+
+    CheckinState:
+      type: object
+      required: [habit_id, date, count, target, complete]
+      properties:
+        habit_id: { type: integer }
+        date: { type: string, format: date }
+        count: { type: integer, minimum: 0 }
+        target: { type: integer, minimum: 1 }
+        complete: { type: boolean, description: True when count >= target. }
+
+    DayCount:
+      type: object
+      required: [date, count]
+      properties:
+        date: { type: string, format: date }
+        count: { type: integer, minimum: 0 }
+
+    HabitHistory:
+      type: object
+      required: [habit_id, name, frequency, weekdays_mask, target_count_per_day, created_at, checkins]
+      properties:
+        habit_id: { type: integer }
+        name: { type: string }
+        frequency: { $ref: "#/components/schemas/Frequency" }
+        weekdays_mask: { type: integer, nullable: true }
+        target_count_per_day: { type: integer }
+        created_at: { type: string, format: date }
+        checkins:
+          type: array
+          items: { $ref: "#/components/schemas/DayCount" }

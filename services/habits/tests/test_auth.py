@@ -1,6 +1,6 @@
 import pytest
 from db import connect, init_schema
-from auth.service import register_user, authenticate_user, get_user_by_id
+from auth import register_user, authenticate_user, get_user_by_id
 
 
 @pytest.fixture
@@ -43,11 +43,11 @@ class TestRegister:
             register_user(db, "Luna", "", "luna", "pass1234")
 
     def test_empty_username_raises(self, db):
-        with pytest.raises(ValueError, match="username is required"):
+        with pytest.raises(ValueError, match="username must be at least 3"):
             register_user(db, "Luna", "Larcher", "", "pass1234")
 
     def test_short_password_raises(self, db):
-        with pytest.raises(ValueError, match="password must be at least 4"):
+        with pytest.raises(ValueError, match="password must be at least 8"):
             register_user(db, "Luna", "Larcher", "luna", "hi")
 
 

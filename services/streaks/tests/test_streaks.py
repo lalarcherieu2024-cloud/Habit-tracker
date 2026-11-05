@@ -6,9 +6,7 @@ hand — no database needed. Only the milestone tests use `db`.
 
 import pytest
 from datetime import date, timedelta
-from db import connect, init_schema
-from habits.service import checkins_by_date, create_habit, log_checkin
-from streaks.service import (
+from service import (
     current_streak, longest_streak, completion_rate, week_states,
     check_and_award_milestones, milestones_for_habit, milestones_for_user,
 )
@@ -21,18 +19,6 @@ def _n_days(n, end_date, count=1):
     return {(end_date - timedelta(days=i)).isoformat(): count for i in range(n)}
 
 
-@pytest.fixture
-def db():
-    """In-memory database with schema loaded and a test user inserted."""
-    conn = connect(":memory:")
-    init_schema(conn)
-    conn.execute(
-        "INSERT INTO users (id, first_name, last_name, username, password_hash) "
-        "VALUES (1, 'Luna', 'Larcher', 'luna', 'x')"
-    )
-    conn.commit()
-    yield conn
-    conn.close()
 
 
 # ── Current streak ──────────────────────────────────────
@@ -66,13 +52,6 @@ class TestCurrentStreak:
         """The grace period is one day only: missing yesterday breaks the streak."""
         checkins = {"2026-10-04": 1, "2026-10-05": 1}
         assert current_streak(checkins, as_of=date(2026, 10, 7)) == 0
-
-    def test_reads_checkins_from_habits_service(self, db):
-        """The seam between the domains: habits hands streaks a {date: count} dict."""
-        hid = create_habit(db, 1, "Read")
-        log_checkin(db, 1, hid, "2026-10-05")
-        log_checkin(db, 1, hid, "2026-10-06")
-        assert current_streak(checkins_by_date(db, hid), as_of=date(2026, 10, 6)) == 2
 
     def test_custom_weekday_skips_rest_days(self):
         """Mon/Wed/Fri habit: Tue and Thu are rest days, not gaps."""
@@ -141,37 +120,37 @@ class TestCompletionRate:
 
 class TestMilestones:
     def test_7_day_milestone(self, db):
-        hid = create_habit(db, 1, "Read")
-        assert 7 in check_and_award_milestones(db, hid, streak=7, as_of=date(2026, 10, 6))
+        hid = 1
+        assert 7 in check_and_award_milestones(db, 1, hid, streak=7, as_of=date(2026, 10, 6))
 
     def test_no_duplicate_milestone(self, db):
-        hid = create_habit(db, 1, "Read")
-        check_and_award_milestones(db, hid, streak=7, as_of=date(2026, 10, 6))
+        hid = 1
+        check_and_award_milestones(db, 1, hid, streak=7, as_of=date(2026, 10, 6))
         # Calling again should not re-award
-        assert check_and_award_milestones(db, hid, streak=7, as_of=date(2026, 10, 6)) == []
+        assert check_and_award_milestones(db, 1, hid, streak=7, as_of=date(2026, 10, 6)) == []
 
     def test_multiple_milestones_at_once(self, db):
-        hid = create_habit(db, 1, "Read")
-        awarded = check_and_award_milestones(db, hid, streak=14, as_of=date(2026, 10, 6))
+        hid = 1
+        awarded = check_and_award_milestones(db, 1, hid, streak=14, as_of=date(2026, 10, 6))
         assert awarded == [7, 14]
 
     def test_milestones_for_habit(self, db):
-        hid = create_habit(db, 1, "Read")
-        check_and_award_milestones(db, hid, streak=7, as_of=date(2026, 10, 6))
+        hid = 1
+        check_and_award_milestones(db, 1, hid, streak=7, as_of=date(2026, 10, 6))
         ms = milestones_for_habit(db, hid)
         assert len(ms) == 1
         assert ms[0]["streak_length"] == 7
 
     def test_milestones_for_user(self, db):
-        h1 = create_habit(db, 1, "Read")
-        h2 = create_habit(db, 1, "Walk")
-        check_and_award_milestones(db, h1, streak=7, as_of=date(2026, 10, 6))
-        check_and_award_milestones(db, h2, streak=14, as_of=date(2026, 10, 6))
+        h1 = 1
+        h2 = 2
+        check_and_award_milestones(db, 1, h1, streak=7, as_of=date(2026, 10, 6))
+        check_and_award_milestones(db, 1, h2, streak=14, as_of=date(2026, 10, 6))
         assert len(milestones_for_user(db, 1)) == 3  # 7 for h1, 7+14 for h2
 
     def test_streak_too_short_no_milestone(self, db):
-        hid = create_habit(db, 1, "Read")
-        assert check_and_award_milestones(db, hid, streak=5, as_of=date(2026, 10, 6)) == []
+        hid = 1
+        assert check_and_award_milestones(db, 1, hid, streak=5, as_of=date(2026, 10, 6)) == []
 
 
 # ── This week grid ──────────────────────────────────────

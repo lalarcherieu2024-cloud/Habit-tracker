@@ -23,7 +23,7 @@ from habits.service import (
     create_habit, archive_habit, list_habits, get_owned_habit,
     log_checkin, undo_checkin, checkins_by_date,
 )
-from streaks.service import (
+from services.streaks.service import (
     is_scheduled, current_streak, longest_streak, completion_rate, week_states,
     check_and_award_milestones, milestones_for_user,
 )

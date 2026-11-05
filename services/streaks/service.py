@@ -149,7 +149,7 @@ def week_states(checkins, target=1, frequency="daily", weekdays_mask=None,
     return states
 
 
-def check_and_award_milestones(db, habit_id, streak, as_of=None):
+def check_and_award_milestones(db, user_id, habit_id, streak, as_of=None):
     """Awards any milestones the current streak has reached that this habit
     doesn't have yet. Returns a list of the new day-counts."""
     as_of = as_of or date.today()
@@ -166,9 +166,9 @@ def check_and_award_milestones(db, habit_id, streak, as_of=None):
 
         if not already:
             db.execute(
-                """INSERT INTO milestones (habit_id, streak_length, achieved_on)
-                   VALUES (?, ?, ?)""",
-                (habit_id, threshold, as_of.isoformat()),
+                """INSERT INTO milestones (user_id, habit_id, streak_length, achieved_on)
+                   VALUES (?, ?, ?, ?)""",
+                (user_id, habit_id, threshold, as_of.isoformat()),
             )
             awarded.append(threshold)
 
@@ -188,9 +188,6 @@ def milestones_for_habit(db, habit_id):
 def milestones_for_user(db, user_id):
     """All milestones across all of a user's habits, newest first."""
     return db.execute(
-        """SELECT m.* FROM milestones m
-           JOIN habits h ON h.id = m.habit_id
-           WHERE h.user_id = ?
-           ORDER BY m.achieved_on DESC""",
+        "SELECT * FROM milestones WHERE user_id = ? ORDER BY achieved_on DESC",
         (user_id,),
     ).fetchall()

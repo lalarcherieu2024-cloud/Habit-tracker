@@ -43,15 +43,6 @@ CREATE TABLE checkins (
     UNIQUE(habit_id, date)
 );
 
-CREATE TABLE milestones (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    habit_id       INTEGER NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
-    streak_length  INTEGER NOT NULL,
-    item_unlocked  TEXT,
-    achieved_on    TEXT NOT NULL,
-    UNIQUE(habit_id, streak_length)
-);
-
 CREATE INDEX idx_habits_user       ON habits(user_id);
 CREATE INDEX idx_habits_group      ON habits(group_id);
 CREATE INDEX idx_habit_groups_user ON habit_groups(user_id);

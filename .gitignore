@@ -8,3 +8,4 @@ data/
 .env
 .coverage
 .pytest_cache/
+.DS_Store
